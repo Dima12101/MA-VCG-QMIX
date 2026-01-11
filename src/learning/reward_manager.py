@@ -3,15 +3,14 @@
 """
 
 import numpy as np
-from typing import Dict, List
 
 class RewardManager:
     """Класс для управления вознаграждениями агентов"""
     
-    def __init__(self, num_agents: int, num_devices: int):
+    def __init__(self, num_agents: int, num_devices: int, vcg_weight: int):
         self.num_agents = num_agents
         self.num_devices = num_devices
-        self.vcg_weight = 0.5  # Вес VCG платежей в функции вознаграждения
+        self.vcg_weight = vcg_weight  # Вес VCG платежей в функции вознаграждения
     
     def compute_local_reward(
         self,

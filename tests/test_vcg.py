@@ -4,7 +4,7 @@
 
 import unittest
 import numpy as np
-from src.mechanisms.vcg_auction import VCGAuction
+from mechanisms.auction import VCGAuctioneer
 
 class TestVCGAuction(unittest.TestCase):
     """Тесты VCG аукциона"""
@@ -12,7 +12,7 @@ class TestVCGAuction(unittest.TestCase):
     def setUp(self):
         self.num_devices = 5
         self.num_edges = 3
-        self.auction = VCGAuction(self.num_devices, self.num_edges)
+        self.auctioneer = VCGAuctioneer(self.num_devices, self.num_edges)
     
     def test_auction_execution(self):
         """Тест выполнения аукциона"""
@@ -21,7 +21,7 @@ class TestVCGAuction(unittest.TestCase):
         costs = np.random.uniform(0.2, 0.5, (self.num_devices, self.num_edges))
         
         # Провести аукцион
-        result = self.auction.run_auction(valuations, costs, timestamp=0)
+        result = self.auctioneer.run_auction(valuations, costs)
         
         # Проверить результаты
         self.assertIsNotNone(result.allocation)
@@ -33,7 +33,7 @@ class TestVCGAuction(unittest.TestCase):
         valuations = np.random.uniform(0.5, 1.0, (self.num_devices, self.num_edges))
         costs = np.random.uniform(0.2, 0.5, (self.num_devices, self.num_edges))
         
-        result = self.auction.run_auction(valuations, costs, timestamp=0)
+        result = self.auctioneer.run_auction(valuations, costs)
         
         self.assertEqual(result.allocation.shape, (self.num_devices, self.num_edges))
     
@@ -42,7 +42,7 @@ class TestVCGAuction(unittest.TestCase):
         valuations = np.ones((self.num_devices, self.num_edges)) * 1.0
         costs = np.ones((self.num_devices, self.num_edges)) * 0.3
         
-        result = self.auction.run_auction(valuations, costs, timestamp=0)
+        result = self.auctioneer.run_auction(valuations, costs)
         
         # Платежи должны быть в разумном диапазоне
         self.assertTrue(np.all(result.payments >= -10))

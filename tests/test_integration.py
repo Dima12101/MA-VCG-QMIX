@@ -4,8 +4,7 @@
 
 import unittest
 import numpy as np
-from src.mechanisms.vcg_auction import VCGAuction
-from src.agents.networks import GRUAgent
+from mechanisms.auction import VCGAuctioneer
 from src.config import ENV_CONFIG
 
 class TestIntegration(unittest.TestCase):
@@ -17,7 +16,7 @@ class TestIntegration(unittest.TestCase):
         num_devices = ENV_CONFIG.num_devices
         
         # 1. Запустить VCG
-        auction = VCGAuction(num_devices, num_edges)
+        auction = VCGAuctioneer(num_devices, num_edges)
         valuations = np.random.uniform(0.5, 1.0, (num_devices, num_edges))
         costs = np.random.uniform(0.2, 0.5, (num_devices, num_edges))
         

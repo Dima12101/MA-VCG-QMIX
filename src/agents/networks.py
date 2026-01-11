@@ -7,9 +7,9 @@ class GRUAgent(nn.Module):
     
     def __init__(self, obs_size: int, hidden_size: int, action_size: int):
         super().__init__()
-        self.obs_size = obs_size
-        self.hidden_size = hidden_size
-        self.action_size = action_size
+        self.obs_size = obs_size        # Размер слоя запоминания
+        self.hidden_size = hidden_size  # Размер скрытого слоя
+        self.action_size = action_size  # Размер слоя действий
         
         self.gru = nn.GRU(obs_size, hidden_size, batch_first=True)
         self.fc1 = nn.Linear(hidden_size, 64)

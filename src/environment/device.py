@@ -1,17 +1,22 @@
-from typing import List, Optional
+from typing import List
 from .task import Task
 
 class Device:
     """Класс для представления мобильного устройства"""
     
-    def __init__(self, device_id: int, importance: float = 1.0):
-        self.device_id = device_id
-        self.importance = importance  # От 0 до 1 (влияет на polarity)
+    def __init__(self, id: int, importance: float = 1.0):
+        self.id = id                            # ID устройства
+        self.importance = importance            # Важность устройства. От 0 до 1 (влияет на polarity)
+        self.submitted_tasks: List[Task] = []   # Выставленные задачи
+        self.completed_tasks: List[Task] = []   # Выполненные задачи
+        self.rejected_tasks: List[Task] = []    # Отклоненные задачи
+        self.total_payment: float = 0.0         # Общая сумма платежа
+
+    def reset(self):
         self.submitted_tasks: List[Task] = []
         self.completed_tasks: List[Task] = []
         self.rejected_tasks: List[Task] = []
         self.total_payment: float = 0.0
-        self.received_payment: float = 0.0
     
     def submit_task(self, task: Task):
         """Отправить задачу в систему"""
@@ -28,7 +33,6 @@ class Device:
     def receive_payment(self, amount: float):
         """Получить платёж"""
         self.total_payment += amount
-        self.received_payment = amount
     
     @property
     def success_rate(self) -> float:

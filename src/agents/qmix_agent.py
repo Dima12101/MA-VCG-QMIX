@@ -3,8 +3,6 @@ QMIX Agent - основной класс агента для обучения
 """
 
 import torch
-import numpy as np
-from typing import Tuple
 from .networks import GRUAgent, MixingNetwork
 from .experience_buffer import ExperienceBuffer
 

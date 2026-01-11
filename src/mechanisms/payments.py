@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 def calculate_vcg_payments(
     allocation: np.ndarray,  # Binary matrix [m x n]: allocation[i][j] = 1 if device i uses edge j
