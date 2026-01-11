@@ -8,8 +8,8 @@ setup(
     name="MA-VCG-QMIX",
     version="1.0.0",
     description="MA-VCG + QMIX для справедливого и адаптивного управления ресурсами",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Dmitry Tereschenko",
+    author_email="dima123-99@mail.ru",
     url="https://github.com/Dima12101/MA-VCG-QMIX",
     packages=find_packages(),
     install_requires=[
