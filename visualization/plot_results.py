@@ -19,7 +19,7 @@ class ResultsVisualizer:
     
     def plot_social_welfare(self, scenario_name: str = 'scenario_1'):
         """График эволюции социального благосустояния"""
-        csv_path = self.results_dir / scenario_name / f'{scenario_name}_episode_0.csv'
+        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
         
         if not csv_path.exists():
             print(f"Файл {csv_path} не найден")
@@ -48,7 +48,7 @@ class ResultsVisualizer:
     
     def plot_fairness_metrics(self, scenario_name: str = 'scenario_1'):
         """График метрик справедливости"""
-        csv_path = self.results_dir / scenario_name / f'{scenario_name}_episode_0.csv'
+        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
         
         df = pd.read_csv(csv_path)
         
@@ -82,7 +82,7 @@ class ResultsVisualizer:
     
     def plot_load_distribution(self, scenario_name: str = 'scenario_1'):
         """График распределения нагрузки по узлам"""
-        csv_path = self.results_dir / scenario_name / f'{scenario_name}_episode_0.csv'
+        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
         
         df = pd.read_csv(csv_path)
         
@@ -109,7 +109,7 @@ class ResultsVisualizer:
     
     def plot_acceptance_rate(self, scenario_name: str = 'scenario_1'):
         """График процента принятых задач"""
-        csv_path = self.results_dir / scenario_name / f'{scenario_name}_episode_0.csv'
+        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
         
         df = pd.read_csv(csv_path)
         
@@ -140,7 +140,7 @@ class ResultsVisualizer:
     
     def plot_latency_distribution(self, scenario_name: str = 'scenario_1'):
         """Гистограмма распределения задержек"""
-        csv_path = self.results_dir / scenario_name / f'{scenario_name}_episode_0.csv'
+        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
         
         df = pd.read_csv(csv_path)
         latencies = df['avg_latency'].dropna()

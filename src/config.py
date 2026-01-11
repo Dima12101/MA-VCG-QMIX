@@ -38,8 +38,8 @@ class TaskConfig:
 class NodeConfig:
     """Конфигурация edge-узла"""
     cpu_capacity: int = 4               
-    memory_capacity: int = 2048         # MB
-    bandwidth: float = 100.0            # Mbps
+    memory_capacity: int = 1024          # MB
+    bandwidth: float = 100.0             # Mbps
 
 @dataclass
 class TrainingConfig:

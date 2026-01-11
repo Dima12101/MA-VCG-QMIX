@@ -107,7 +107,7 @@ class Simulator:
                 print(f"  Среднее SW: {np.mean(episode_results['social_welfare']):.1f}")
                 print(f"  Средний Джини: {np.mean(episode_results['gini_payment']):.3f}\n")
     
-    def save_results(self, results_path: str):
+    def save_results(self, scenario_name: str, results_path: str):
         """Сохранить результаты в файлы"""
         results_dir = Path(results_path)
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -130,15 +130,16 @@ class Simulator:
             })
             
             # Добавить нагрузки узлов
-            # loads = np.array(episode_results['resource_utilization']).T
-            # for j in range(self.env_config.num_nodes):
-            #     df[f'node_util_{j}'] = loads[j]
+            loads = np.array(episode_results['resource_utilization']).T
+            for j in range(self.env_config.num_nodes):
+                df[f'load_node_{j}'] = loads[j]
             
             csv_path = results_episodes_dir / f'result_episode_{i}.csv'
             df.to_csv(csv_path, index=False)
         
         # Сохранить общую статистику
         summary = {
+            'scenario': scenario_name,
             'num_nodes': self.env_config.num_nodes,
             'num_devices': self.env_config.num_devices,
             'arrival_rate': self.env_config.task_lambda_arrival,
