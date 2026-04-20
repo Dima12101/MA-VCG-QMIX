@@ -24,16 +24,17 @@ class TestQMIXNetworks(unittest.TestCase):
     def test_mixing_network_forward(self):
         """Тест прямого прохода Mixing Network"""
         num_agents = 3
-        mixing_net = MixingNetwork(num_agents, action_size=4, hidden_size=64)
+        state_size = 10
+        mixing_net = MixingNetwork(num_agents, state_size=state_size, hidden_size=64)
         
-        # Локальные Q-значения [batch=2, num_agents=3, actions=4]
-        q_values = torch.randn(2, 3, 4)
+        # Локальные Q-значения уже выбраны по joint action [batch=2, num_agents=3]
+        q_values = torch.randn(2, 3)
         # Состояние [batch=2, state_size=10]
-        state = torch.randn(2, 10)
+        state = torch.randn(2, state_size)
         
         global_q = mixing_net(q_values, state)
         
-        self.assertEqual(global_q.shape, (2, 4))  # [batch, actions]
+        self.assertEqual(global_q.shape, (2,))  # [batch]
 
 if __name__ == '__main__':
     unittest.main()

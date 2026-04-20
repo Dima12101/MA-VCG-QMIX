@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 from src.agents.networks import GRUAgent, MixingNetwork
@@ -11,40 +13,39 @@ class QMIXTrainer:
     def __init__(self, num_agents: int,
                  network_config: NetworkConfig = None,
                  training_config: TrainingConfig = None):
+        network_config = network_config or NetworkConfig()
+        training_config = training_config or TrainingConfig()
         self.num_agents = num_agents
         self.obs_size = network_config.obs_size
         self.hidden_size = network_config.hidden_size
         self.action_size = network_config.action_size
         self.training_config = training_config
+        self.state_size = network_config.state_size or (num_agents * self.obs_size)
         
         # Создать агентские сети
-        self.agent_networks = [
+        self.agent_networks = nn.ModuleList([
             GRUAgent(self.obs_size, self.hidden_size, self.action_size)
             for _ in range(self.num_agents)
-        ]
+        ])
         
         # Целевые сети (для стабилизации)
-        self.target_networks = [
+        self.target_networks = nn.ModuleList([
             GRUAgent(self.obs_size,  self.hidden_size, self.action_size)
             for _ in range(self.num_agents)
-        ]
+        ])
         
         # Скопировать веса
         for agent, target in zip(self.agent_networks, self.target_networks):
             target.load_state_dict(agent.state_dict())
         
         # Mixing network
-        self.mixing_network = MixingNetwork(self.num_agents, self.action_size,  self.hidden_size)
-        self.target_mixing_network = MixingNetwork(self.num_agents, self.action_size,  self.hidden_size)
+        self.mixing_network = MixingNetwork(self.num_agents, self.state_size, self.hidden_size)
+        self.target_mixing_network = MixingNetwork(self.num_agents, self.state_size, self.hidden_size)
         self.target_mixing_network.load_state_dict(self.mixing_network.state_dict())
         
         # Оптимизаторы
-        self.agent_optimizers = [
-            optim.Adam(agent.parameters(), lr=self.training_config.learning_rate)
-            for agent in self.agent_networks
-        ]
-        self.mixing_optimizer = optim.Adam(
-            self.mixing_network.parameters(),
+        self.optimizer = optim.Adam(
+            list(self.agent_networks.parameters()) + list(self.mixing_network.parameters()),
             lr=self.training_config.learning_rate
         )
         
@@ -88,44 +89,53 @@ class QMIXTrainer:
         rewards = torch.FloatTensor(np.array(batch['rewards']))
         next_states = torch.FloatTensor(np.array(batch['next_states']))
         dones = torch.FloatTensor(np.array(batch['dones']))
+        state_vectors = states.reshape(states.size(0), -1)
+        next_state_vectors = next_states.reshape(next_states.size(0), -1)
+        team_rewards = rewards.mean(dim=1)
         
         # Вычислить текущие Q-значения
-        q_values_list = []
+        chosen_q_values = []
         for i, agent_net in enumerate(self.agent_networks):
             q_vals, _ = agent_net(states[:, i:i+1, :])
-            q_values_list.append(q_vals)
-        
-        q_values = torch.stack(q_values_list, dim=1)  # [batch, num_agents, actions]
+            chosen_q = q_vals.gather(1, actions[:, i:i+1]).squeeze(1)
+            chosen_q_values.append(chosen_q)
+        agent_qs = torch.stack(chosen_q_values, dim=1)
         
         # Вычислить целевые Q-значения
         with torch.no_grad():
-            q_targets_list = []
+            target_q_values = []
             for i, target_net in enumerate(self.target_networks):
-                q_targets, _ = target_net(next_states[:, i:i+1, :])
-                q_targets_list.append(q_targets)
-            
-            q_targets = torch.stack(q_targets_list, dim=1)
+                q_online_next, _ = self.agent_networks[i](next_states[:, i:i+1, :])
+                greedy_next_actions = q_online_next.argmax(dim=1, keepdim=True)
+                q_target_next, _ = target_net(next_states[:, i:i+1, :])
+                target_q = q_target_next.gather(1, greedy_next_actions).squeeze(1)
+                target_q_values.append(target_q)
+            target_agent_qs = torch.stack(target_q_values, dim=1)
         
         # Вычислить глобальное Q через Mixing Network
-        global_q = self.mixing_network(q_values, states.mean(dim=2))
+        global_q = self.mixing_network(agent_qs, state_vectors)
         
         # Целевое глобальное Q
         with torch.no_grad():
-            global_q_target = self.target_mixing_network(q_targets, next_states.mean(dim=2))
+            global_q_target = self.target_mixing_network(target_agent_qs, next_state_vectors)
         
         # TD-ошибка
         loss = self.calculate_td_error(
-            q_current=global_q.max(dim=1).values,
-            reward=rewards.mean(dim=1),
-            q_next=global_q_target.max(dim=1).values,
+            q_current=global_q,
+            reward=team_rewards,
+            q_next=global_q_target,
             gamma=self.training_config.gamma,
             done=dones
         )
         
         # Оптимизация
-        self.mixing_optimizer.zero_grad()
+        self.optimizer.zero_grad()
         loss.backward()
-        self.mixing_optimizer.step()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.agent_networks.parameters()) + list(self.mixing_network.parameters()),
+            self.training_config.grad_norm_clip,
+        )
+        self.optimizer.step()
         
         # Обновить целевые сети
         self.update_counter += 1
@@ -144,13 +154,14 @@ class QMIXTrainer:
     
     def calculate_td_error(
         self,
-        q_current: float,
-        reward: float,
-        q_next: float,
+        q_current: torch.Tensor,
+        reward: torch.Tensor,
+        q_next: torch.Tensor,
         gamma: float = 0.99,
-        done: bool = False
-    ) -> float:
+        done: torch.Tensor = None
+    ) -> torch.Tensor:
         """TD-ошибка для обучения QMIX"""
+        if done is None:
+            done = torch.zeros_like(reward)
         target = reward + (gamma * q_next) * (1 - done)
-        error = abs(target - q_current)
-        return error.mean()
+        return F.mse_loss(q_current, target)

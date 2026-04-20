@@ -18,7 +18,6 @@ checkpoint/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
 
 # Results
 experiments/results/
@@ -38,3 +37,6 @@ Thumbs.db
 # Temporary
 *.tmp
 *.temp
+
+#LaTex
+*.tex

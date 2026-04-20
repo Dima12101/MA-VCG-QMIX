@@ -30,9 +30,13 @@ class Device:
         """Задача отклонена"""
         self.rejected_tasks.append(task)
     
-    def receive_payment(self, amount: float):
-        """Получить платёж"""
+    def record_payment(self, amount: float):
+        """Учесть платёж устройства за успешно размещённую задачу."""
         self.total_payment += amount
+
+    def receive_payment(self, amount: float):
+        """Обратная совместимость со старым интерфейсом."""
+        self.record_payment(amount)
     
     @property
     def success_rate(self) -> float:

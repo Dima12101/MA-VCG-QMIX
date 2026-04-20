@@ -1,98 +1,87 @@
 # MA-VCG-QMIX
 
-Система интегрирует механизм аукциона (MA-VCG) с алгоритмом многоагентного обучения с подкреплением (QMIX), что позволяет достигать справедливости, оптимальности и адаптивности одновременно.
+Прототип гибридного метода управления ресурсами в edge-системе, объединяющего:
+
+- `MA-VCG` для распределения задач по максимуму социального благосостояния с расчётом VCG-платежей;
+- `QMIX` для адаптивного выбора локальных действий edge-узлов в парадигме CTDE;
+- графовую модель сети, учитывающую задержки между устройствами и узлами.
+
+Текущая реализация согласована с формализацией из диссертации:
+
+- полезность задачи учитывает приоритет, значимость устройства, задержку и затраты на передачу;
+- стоимость узла учитывает вычислительные, сетевые и перегрузочные издержки;
+- аукцион строит глобальное распределение с учётом ресурсных ограничений;
+- VCG-платежи интегрируются в функцию вознаграждения QMIX.
 
 ## Структура проекта
 
-```
-integrated-edge-system/
+```text
+MA-VCG-QMIX/
 ├── README.md
 ├── setup.py
 ├── requirements.txt
-├── LICENSE
-├── .gitignore
-│
 ├── src/
-│   ├── __init__.py
-│   ├── config.py                      # Конфигурация параметров
-│   │
+│   ├── config.py
 │   ├── environment/
-│   │   ├── __init__.py
-│   │   ├── edge_network.py            # Симуляция edge-сети
-│   │   ├── task.py                    # Класс Task
-│   │   └── device.py                  # Класс Device
-│   │
+│   │   ├── environment.py
+│   │   ├── edge_node.py
+│   │   ├── task.py
+│   │   └── device.py
 │   ├── mechanisms/
-│   │   ├── __init__.py
-│   │   ├── vcg_auction.py             # Механизм MA-VCG
-│   │   └── payments.py                # Расчёт платежей VCG
-│   │
+│   │   ├── auction.py
+│   │   ├── evaluation.py
+│   │   └── payments.py
 │   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── qmix_agent.py              # Агент QMIX
-│   │   ├── networks.py                # Архитектура нейросетей
-│   │   └── experience_buffer.py       # Буфер опыта
-│   │
+│   │   ├── qmix_agent.py
+│   │   ├── networks.py
+│   │   └── experience_buffer.py
 │   ├── learning/
-│   │   ├── __init__.py
-│   │   ├── trainer.py                 # Тренер для обучения
-│   │   ├── reward_manager.py          # Управление вознаграждениями
-│   │   └── metrics.py                 # Вычисление метрик
-│   │
+│   │   ├── trainer.py
+│   │   ├── simulator.py
+│   │   └── reward_manager.py
 │   └── utils/
-│       ├── __init__.py
-│       ├── logger.py                  # Логирование
-│       └── visualization.py           # Визуализация результатов
-│
+│       ├── logger.py
+│       └── visualization.py
 ├── tests/
-│   ├── __init__.py
 │   ├── test_vcg.py
 │   ├── test_qmix.py
 │   └── test_integration.py
-│
 ├── experiments/
-│   ├── scenario_1_baseline.py         # Сценарий 1
-│   ├── scenario_2_high_load.py        # Сценарий 2
-│   ├── scenario_3_heterogeneous.py    # Сценарий 3
-│   ├── scenario_4_dynamic.py          # Сценарий 4
-│   ├── sensitivity_analysis.py        # Анализ чувствительности
-│   └── results/
-│       ├── metrics.csv
-│       ├── logs/
-│       └── plots/
-│
-└── notebooks/
-    ├── analysis.ipynb                 # Анализ результатов
-    └── visualization.ipynb            # Построение графиков
+│   ├── scenario_1_baseline.py
+│   ├── scenario_2_high_load.py
+│   ├── scenario_3_heterogeneous.py
+│   └── scenario_4_dynamic.py
+├── visualization/
+│   └── plot_results.py
+└── main_run_all_scenarios.py
 ```
 
 ## Запуск проекта
 
-**Вариант 1: Запуск с минимальной настройкой**
 ```bash
-# 1. Клонировать или распаковать проект
-git clone https://github.com/your-username/integrated-edge-system.git
-cd integrated-edge-system
-
-# 2. Установить зависимости
 pip install -r requirements.txt
-
-# 3. Запустить первый сценарий
 python experiments/scenario_1_baseline.py
-
-# 4. Построить графики
 python visualization/plot_results.py
-
-# Результаты в: experiments/results/plots/
 ```
 
-**Вариант 2: Полный запуск всех сценариев**
+Полный прогон всех сценариев:
+
 ```bash
-# Запустить всё сразу
 python main_run_all_scenarios.py
-
-# Результаты всех сценариев в: experiments/results/scenario_{1,2,3,4}/
 ```
+
+Тесты:
+
+```bash
+pytest -q
+```
+
+Результаты сохраняются в `experiments/results/`.
+
+## Ограничения прототипа
+
+- Оптимизация аукциона реализована жадной аппроксимацией глобального распределения с учётом CPU/MEM ограничений узлов.
+- Сценарии ориентированы на экспериментальную валидацию метода, а не на промышленный runtime.
 
 ## 📝 Лицензия
 

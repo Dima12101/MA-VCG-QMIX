@@ -106,6 +106,7 @@ class Simulator:
                 print(f"  Процент принятых: {np.mean(episode_results['acceptance_rate']):.1f}%")
                 print(f"  Среднее SW: {np.mean(episode_results['social_welfare']):.1f}")
                 print(f"  Средний Джини: {np.mean(episode_results['gini_payment']):.3f}\n")
+        return self.results
     
     def save_results(self, scenario_name: str, results_path: str):
         """Сохранить результаты в файлы"""
@@ -157,3 +158,4 @@ class Simulator:
         summary_df = pd.DataFrame([summary])
         summary_path = results_dir / 'summary.csv'
         summary_df.to_csv(summary_path, index=False)
+        return summary

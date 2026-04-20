@@ -17,7 +17,7 @@ def run_baseline_scenario():
     print("SCENARIO 1: BASELINE")
     print("=" * 60)
     simulator.run()
-    simulator.save_results('scenario_1', Path('experiments/results/scenario_1'))
+    return simulator.save_results('scenario_1', Path('experiments/results/scenario_1'))
 
 if __name__ == '__main__':
     run_baseline_scenario()

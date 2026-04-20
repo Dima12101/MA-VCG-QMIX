@@ -3,35 +3,70 @@
 """
 
 import unittest
+from dataclasses import replace
+import random
 import numpy as np
-from mechanisms.auction import VCGAuctioneer
-from src.config import ENV_CONFIG
+import torch
+from src.config import (
+    AUCTION_CONFIG,
+    ENV_CONFIG,
+    NETWORK_CONFIG,
+    NODE_CONFIG,
+    TASK_CONFIG,
+    TRAINING_CONFIG,
+)
+from src.environment.environment import EdgeComputingSystem
+from src.learning.trainer import QMIXTrainer
 
 class TestIntegration(unittest.TestCase):
     """Интеграционные тесты"""
     
-    def test_vcg_qmix_pipeline(self):
-        """Тест всей цепочки: VCG -> QMIX"""
-        num_edges = ENV_CONFIG.num_edges
-        num_devices = ENV_CONFIG.num_devices
-        
-        # 1. Запустить VCG
-        auction = VCGAuctioneer(num_devices, num_edges)
-        valuations = np.random.uniform(0.5, 1.0, (num_devices, num_edges))
-        costs = np.random.uniform(0.2, 0.5, (num_devices, num_edges))
-        
-        vcg_result = auction.run_auction(valuations, costs, timestamp=0)
-        
-        # Проверить что VCG сработал
-        self.assertIsNotNone(vcg_result.allocation)
-        self.assertIsNotNone(vcg_result.payments)
-        
-        # 2. Использовать платежи для QMIX
-        payments = vcg_result.payments
-        
-        # Проверить что платежи разумные
-        self.assertEqual(len(payments), num_devices)
-        self.assertTrue(np.isfinite(payments).all())
+    def test_environment_and_trainer_pipeline(self):
+        """Тест всей цепочки: среда -> аукцион -> награды -> шаг обучения QMIX."""
+        random.seed(0)
+        np.random.seed(0)
+        torch.manual_seed(0)
+
+        env_config = replace(ENV_CONFIG, num_nodes=3, num_devices=5, task_lambda_arrival=3.0)
+        network_config = replace(NETWORK_CONFIG, state_size=env_config.num_nodes * NETWORK_CONFIG.obs_size)
+        training_config = replace(
+            TRAINING_CONFIG,
+            batch_size=1,
+            buffer_size=8,
+            target_update_freq=1,
+        )
+        env = EdgeComputingSystem(
+            env_config=env_config,
+            node_config=NODE_CONFIG,
+            task_config=TASK_CONFIG,
+            auction_config=AUCTION_CONFIG,
+        )
+        trainer = QMIXTrainer(
+            num_agents=env_config.num_nodes,
+            network_config=network_config,
+            training_config=training_config,
+        )
+
+        current_state = env.get_observations()
+        actions = trainer.select_actions(current_state)
+        rewards, info, metrics = env.step(actions)
+        next_state = env.get_observations()
+
+        trainer.add_experience(
+            state=current_state,
+            actions=actions,
+            rewards=rewards,
+            next_state=next_state,
+            done=False,
+        )
+        loss = trainer.train_step()
+
+        self.assertEqual(rewards.shape, (env_config.num_nodes,))
+        self.assertEqual(len(actions), env_config.num_nodes)
+        self.assertLessEqual(info["accepted"] + info["rejected"], env_config.num_devices)
+        self.assertTrue(np.isfinite(metrics["social_welfare"]))
+        self.assertIsNotNone(loss)
+        self.assertGreaterEqual(loss, 0.0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -37,12 +37,12 @@ def main():
         
         try:
             result = scenario_func()
-            results[scenario_name] = result
-            print(f"\n✅ {scenario_name} scenario completed successfully!")
+            results[scenario_name] = {"success": True, "result": result}
+            print(f"\n{scenario_name} scenario completed successfully.")
         except Exception as e:
-            print(f"\n❌ {scenario_name} scenario FAILED!")
+            print(f"\n{scenario_name} scenario failed.")
             print(f"Error: {str(e)}")
-            results[scenario_name] = None
+            results[scenario_name] = {"success": False, "result": None}
     
     # Итоговый отчет
     print("\n" + "=" * 80)
@@ -50,7 +50,7 @@ def main():
     print("=" * 80)
     
     for scenario_name, result in results.items():
-        status = "✅ COMPLETED" if result is not None else "❌ FAILED"
+        status = "COMPLETED" if result["success"] else "FAILED"
         print(f"{scenario_name}: {status}")
     
     print("\nAll results saved to: experiments/results/")

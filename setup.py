@@ -18,6 +18,7 @@ setup(
         "matplotlib>=3.4.0",
         "seaborn>=0.11.0",
         "pandas>=1.3.0",
+        "networkx>=2.8.0",
     ],
     python_requires=">=3.8",
     classifiers=[

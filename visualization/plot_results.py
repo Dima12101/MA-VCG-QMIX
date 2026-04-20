@@ -1,236 +1,316 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
-from pathlib import Path
+"""Chapter-ready plotting utilities for the validation benchmark."""
 
-# Установить стиль
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (14, 10)
-plt.rcParams['font.size'] = 11
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+
+sns.set_theme(style="whitegrid", context="talk")
+plt.rcParams["figure.figsize"] = (14, 8)
+plt.rcParams["font.family"] = "DejaVu Sans"
+plt.rcParams["axes.titlesize"] = 16
+plt.rcParams["axes.labelsize"] = 13
+plt.rcParams["legend.fontsize"] = 11
+
 
 class ResultsVisualizer:
-    """Класс для визуализации результатов экспериментов"""
-    
-    def __init__(self, results_dir: str = 'experiments/results'):
+    """Build plots and tables for the experimental validation chapter."""
+
+    def __init__(self, results_dir: str = "experiments/results/validation"):
         self.results_dir = Path(results_dir)
-        self.plots_dir = self.results_dir / 'plots'
+        self.plots_dir = self.results_dir / "plots"
+        self.tables_dir = self.results_dir / "tables"
         self.plots_dir.mkdir(parents=True, exist_ok=True)
-    
-    def plot_social_welfare(self, scenario_name: str = 'scenario_1'):
-        """График эволюции социального благосустояния"""
-        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
-        
-        if not csv_path.exists():
-            print(f"Файл {csv_path} не найден")
-            return
-        
-        df = pd.read_csv(csv_path)
-        
-        plt.figure(figsize=(12, 6))
-        plt.plot(df['time'], df['social_welfare'], linewidth=2, label='Social Welfare')
-        
-        # Добавить линию тренда
-        z = np.polyfit(df['time'], df['social_welfare'], 3)
-        p = np.poly1d(z)
-        plt.plot(df['time'], p(df['time']), '--', alpha=0.5, label='Trend')
-        
-        plt.xlabel('Time (steps)', fontsize=12)
-        plt.ylabel('Social Welfare', fontsize=12)
-        plt.title('Evolution of Social Welfare', fontsize=14)
-        plt.legend(fontsize=11)
-        plt.grid(True, alpha=0.3)
-        
-        save_path = self.plots_dir / f'{scenario_name}_social_welfare.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
-        plt.close()
-    
-    def plot_fairness_metrics(self, scenario_name: str = 'scenario_1'):
-        """График метрик справедливости"""
-        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
-        
-        df = pd.read_csv(csv_path)
-        
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-        
-        # Коэффициент Джини
-        ax1.plot(df['time'], df['gini_payment'], linewidth=2, color='red')
-        ax1.fill_between(df['time'], df['gini_payment'], alpha=0.3, color='red')
-        ax1.set_xlabel('Time (steps)', fontsize=11)
-        ax1.set_ylabel('Gini Coefficient', fontsize=11)
-        ax1.set_title('Payment Fairness (Gini)', fontsize=12)
-        ax1.grid(True, alpha=0.3)
-        ax1.axhline(y=0.3, color='green', linestyle='--', label='Good fairness threshold')
-        ax1.legend()
-        
-        # Индекс справедливости
-        ax2.plot(df['time'], df['fairness_index'], linewidth=2, color='blue')
-        ax2.fill_between(df['time'], df['fairness_index'], alpha=0.3, color='blue')
-        ax2.set_xlabel('Time (steps)', fontsize=11)
-        ax2.set_ylabel('Fairness Index', fontsize=11)
-        ax2.set_title('Resource Allocation Fairness', fontsize=12)
-        ax2.grid(True, alpha=0.3)
-        ax2.axhline(y=0.85, color='green', linestyle='--', label='Good fairness threshold')
-        ax2.legend()
-        
+        self.tables_dir.mkdir(parents=True, exist_ok=True)
+
+        self.palette = {
+            "MA-VCG": "#2563eb",
+            "QMIX": "#f59e0b",
+            "MA-VCG-QMIX": "#059669",
+        }
+
+    def _save_figure(self, stem: str):
+        for suffix in ("png", "pdf"):
+            plt.savefig(
+                self.plots_dir / f"{stem}.{suffix}",
+                dpi=300,
+                bbox_inches="tight",
+            )
+
+    def load_summary(self) -> pd.DataFrame:
+        """Load the benchmark summary table."""
+        summary_path = self.results_dir / "summary.csv"
+        if summary_path.exists():
+            return pd.read_csv(summary_path)
+
+        summary_files = sorted(self.results_dir.glob("*/*/summary.csv"))
+        if not summary_files:
+            raise FileNotFoundError(
+                "Файлы summary.csv не найдены. Сначала запустите benchmark в notebooks/analysis.ipynb."
+            )
+        frames = [pd.read_csv(path) for path in summary_files]
+        summary = pd.concat(frames, ignore_index=True)
+        summary.to_csv(summary_path, index=False)
+        return summary
+
+    def load_episode_summary(self) -> pd.DataFrame:
+        """Load episode-level aggregates."""
+        files = sorted(self.results_dir.glob("*/*/episode_summary.csv"))
+        if not files:
+            raise FileNotFoundError("Файлы episode_summary.csv не найдены.")
+        return pd.concat([pd.read_csv(path) for path in files], ignore_index=True)
+
+    def load_step_records(self, scenario: str, method: str) -> pd.DataFrame:
+        """Load step-level records for one scenario and method."""
+        episode_files = sorted((self.results_dir / scenario / method / "episodes").glob("episode_*.csv"))
+        if not episode_files:
+            raise FileNotFoundError(f"Не найдены step-level результаты для {scenario}/{method}.")
+        return pd.concat([pd.read_csv(path) for path in episode_files], ignore_index=True)
+
+    @staticmethod
+    def _format_summary_table(df: pd.DataFrame) -> pd.DataFrame:
+        formatted = df.copy()
+        rename_map = {
+            "scenario_label": "Сценарий",
+            "method_label": "Метод",
+            "mean_acceptance_rate": "Принятие задач, %",
+            "mean_social_welfare": "Социальное благосостояние",
+            "mean_avg_latency": "Средняя задержка, мс",
+            "mean_gini_payment": "Джини платежей",
+            "mean_fairness_index": "Индекс справедливости",
+            "mean_completed_tasks": "Выполнено задач",
+            "mean_reward": "Среднее вознаграждение",
+        }
+        formatted = formatted[list(rename_map.keys())].rename(columns=rename_map)
+        return formatted
+
+    def export_tables(self):
+        """Export summary tables in CSV and LaTeX formats."""
+        summary = self.load_summary()
+        summary = summary.sort_values(["scenario", "method"])
+        chapter_table = self._format_summary_table(summary)
+        chapter_table.to_csv(self.tables_dir / "summary_table.csv", index=False)
+        chapter_table.to_latex(
+            self.tables_dir / "summary_table.tex",
+            index=False,
+            escape=False,
+            float_format=lambda value: f"{value:.3f}" if isinstance(value, float) else str(value),
+        )
+
+        winners = (
+            summary.sort_values("mean_social_welfare", ascending=False)
+            .groupby("scenario_label", as_index=False)
+            .first()[["scenario_label", "method_label", "mean_social_welfare"]]
+            .rename(
+                columns={
+                    "scenario_label": "Сценарий",
+                    "method_label": "Лучший метод по SW",
+                    "mean_social_welfare": "Макс. SW",
+                }
+            )
+        )
+        winners.to_csv(self.tables_dir / "scenario_winners.csv", index=False)
+        winners.to_latex(
+            self.tables_dir / "scenario_winners.tex",
+            index=False,
+            escape=False,
+            float_format=lambda value: f"{value:.3f}" if isinstance(value, float) else str(value),
+        )
+
+        for scenario_name, scenario_df in summary.groupby("scenario"):
+            scenario_table = self._format_summary_table(scenario_df)
+            scenario_table.to_csv(self.tables_dir / f"{scenario_name}_table.csv", index=False)
+            scenario_table.to_latex(
+                self.tables_dir / f"{scenario_name}_table.tex",
+                index=False,
+                escape=False,
+                float_format=lambda value: f"{value:.3f}" if isinstance(value, float) else str(value),
+            )
+
+    def plot_method_overview(self):
+        """Grouped bar charts for the key summary metrics."""
+        summary = self.load_summary()
+        metrics = [
+            ("mean_social_welfare", "Социальное благосостояние"),
+            ("mean_acceptance_rate", "Принятие задач, %"),
+            ("mean_avg_latency", "Средняя задержка, мс"),
+            ("mean_gini_payment", "Джини платежей"),
+        ]
+
+        fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+        axes = axes.flatten()
+        for ax, (metric, title) in zip(axes, metrics):
+            sns.barplot(
+                data=summary,
+                x="scenario_label",
+                y=metric,
+                hue="method_label",
+                palette=self.palette,
+                ax=ax,
+            )
+            ax.set_title(title)
+            ax.set_xlabel("")
+            ax.tick_params(axis="x", rotation=15)
+            if metric == "mean_gini_payment":
+                ax.axhline(0.3, color="#7c3aed", linestyle="--", linewidth=1.5, label="Целевой порог")
+        handles, labels = axes[0].get_legend_handles_labels()
+        for ax in axes:
+            if ax.legend_:
+                ax.legend_.remove()
+        fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
+        fig.suptitle("Сравнение методов по ключевым метрикам", y=1.02)
         plt.tight_layout()
-        save_path = self.plots_dir / f'{scenario_name}_fairness_metrics.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
-        plt.close()
-    
-    def plot_load_distribution(self, scenario_name: str = 'scenario_1'):
-        """График распределения нагрузки по узлам"""
-        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
-        
-        df = pd.read_csv(csv_path)
-        
-        # Найти столбцы с нагрузкой узлов
-        load_cols = [col for col in df.columns if col.startswith('load_node')]
-        
-        plt.figure(figsize=(12, 6))
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-        
-        for i, col in enumerate(load_cols):
-            plt.plot(df['time'], df[col], label=f'Node {i}', linewidth=2, color=colors[i % len(colors)])
-        
-        plt.xlabel('Time (steps)', fontsize=12)
-        plt.ylabel('Node Load', fontsize=12)
-        plt.title('Load Distribution Across Edge Nodes', fontsize=14)
-        plt.legend(fontsize=11, loc='best')
-        plt.grid(True, alpha=0.3)
-        plt.ylim(0, 1.1)
-        
-        save_path = self.plots_dir / f'{scenario_name}_load_distribution.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
-        plt.close()
-    
-    def plot_acceptance_rate(self, scenario_name: str = 'scenario_1'):
-        """График процента принятых задач"""
-        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
-        
-        df = pd.read_csv(csv_path)
-        
-        # Вычислить процент принятых задач
-        total = df['accepted_tasks'] + df['rejected_tasks']
-        acceptance_rate = (df['accepted_tasks'] / total * 100).fillna(0)
-        
-        plt.figure(figsize=(12, 6))
-        plt.plot(df['time'], acceptance_rate, linewidth=2, label='Acceptance Rate', color='green')
-        plt.fill_between(df['time'], acceptance_rate, alpha=0.3, color='green')
-        
-        # Скользящее среднее
-        window = 50
-        ma = acceptance_rate.rolling(window).mean()
-        plt.plot(df['time'], ma, '--', linewidth=2, label=f'MA (window={window})', color='darkgreen')
-        
-        plt.xlabel('Time (steps)', fontsize=12)
-        plt.ylabel('Acceptance Rate (%)', fontsize=12)
-        plt.title('Task Acceptance Rate Over Time', fontsize=14)
-        plt.legend(fontsize=11)
-        plt.grid(True, alpha=0.3)
-        plt.ylim(0, 105)
-        
-        save_path = self.plots_dir / f'{scenario_name}_acceptance_rate.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
-        plt.close()
-    
-    def plot_latency_distribution(self, scenario_name: str = 'scenario_1'):
-        """Гистограмма распределения задержек"""
-        csv_path = self.results_dir / scenario_name / 'episodes' / f'result_episode_0.csv'
-        
-        df = pd.read_csv(csv_path)
-        latencies = df['avg_latency'].dropna()
-        
-        plt.figure(figsize=(12, 6))
-        plt.hist(latencies, bins=30, color='skyblue', edgecolor='black', alpha=0.7)
-        plt.axvline(latencies.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {latencies.mean():.1f} ms')
-        plt.axvline(latencies.median(), color='orange', linestyle='--', linewidth=2, label=f'Median: {latencies.median():.1f} ms')
-        
-        plt.xlabel('Latency (ms)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.title('Latency Distribution', fontsize=14)
-        plt.legend(fontsize=11)
-        plt.grid(True, alpha=0.3, axis='y')
-        
-        save_path = self.plots_dir / f'{scenario_name}_latency_distribution.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
-        plt.close()
-    
-    def plot_comparison_scenarios(self):
-        """Сравнение всех сценариев"""
-        scenarios = ['scenario_1', 'scenario_2', 'scenario_3', 'scenario_4']
-        summaries = []
-        
-        for scenario in scenarios:
-            summary_path = self.results_dir / scenario / 'summary.csv'
-            if summary_path.exists():
-                summary = pd.read_csv(summary_path)
-                summaries.append(summary)
-        
-        if not summaries:
-            print("Не найдены файлы summary.csv")
-            return
-        
-        df = pd.concat(summaries, ignore_index=True)
-        
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        
-        # Acceptance Rate
-        axes[0, 0].bar(df['scenario'], df['avg_acceptance_rate'], color='green', alpha=0.7)
-        axes[0, 0].set_ylabel('Acceptance Rate (%)', fontsize=11)
-        axes[0, 0].set_title('Task Acceptance Rate by Scenario', fontsize=12)
-        axes[0, 0].grid(True, alpha=0.3, axis='y')
-        
-        # Social Welfare
-        axes[0, 1].bar(df['scenario'], df['avg_sw'], color='blue', alpha=0.7)
-        axes[0, 1].set_ylabel('Social Welfare', fontsize=11)
-        axes[0, 1].set_title('Average Social Welfare by Scenario', fontsize=12)
-        axes[0, 1].grid(True, alpha=0.3, axis='y')
-        
-        # Fairness (Gini)
-        axes[1, 0].bar(df['scenario'], df['avg_gini'], color='red', alpha=0.7)
-        axes[1, 0].set_ylabel('Gini Coefficient', fontsize=11)
-        axes[1, 0].set_title('Payment Fairness (Gini) by Scenario', fontsize=12)
-        axes[1, 0].axhline(y=0.3, color='green', linestyle='--', label='Good fairness')
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3, axis='y')
-        
-        # Summary metrics
-        axes[1, 1].axis('off')
-        summary_text = "Summary Statistics\n\n"
-        for col in ['avg_acceptance_rate', 'avg_sw', 'avg_gini']:
-            summary_text += f"{col}:\n"
-            summary_text += f"  Mean: {df[col].mean():.2f}\n"
-            summary_text += f"  Std: {df[col].std():.2f}\n\n"
-        
-        axes[1, 1].text(0.1, 0.9, summary_text, fontsize=10, verticalalignment='top',
-                       family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        plt.tight_layout()
-        save_path = self.plots_dir / 'scenario_comparison.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"График сохранён: {save_path}")
+        self._save_figure("method_overview")
         plt.close()
 
-if __name__ == '__main__':
-    viz = ResultsVisualizer()
-    
-    # Построить графики для Сценария 1
-    scenario = 'scenario_1'
-    print(f"Построение графиков для {scenario}...")
-    
-    viz.plot_social_welfare(scenario)
-    viz.plot_fairness_metrics(scenario)
-    viz.plot_load_distribution(scenario)
-    viz.plot_acceptance_rate(scenario)
-    viz.plot_latency_distribution(scenario)
-    
-    # Сравнение сценариев
-    viz.plot_comparison_scenarios()
-    
-    print("\nВсе графики построены!")
+    def plot_learning_curves(self):
+        """Episode-level learning curves for the trainable methods."""
+        episode_summary = self.load_episode_summary()
+        metrics = [
+            ("mean_social_welfare", "Социальное благосостояние"),
+            ("mean_acceptance_rate", "Принятие задач, %"),
+            ("mean_reward", "Среднее вознаграждение"),
+            ("mean_td_error", "TD-ошибка"),
+        ]
+        fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+        axes = axes.flatten()
+        for ax, (metric, title) in zip(axes, metrics):
+            sns.lineplot(
+                data=episode_summary,
+                x="episode",
+                y=metric,
+                hue="method_label",
+                style="scenario_label",
+                palette=self.palette,
+                linewidth=2.2,
+                ax=ax,
+            )
+            ax.set_title(title)
+            ax.set_xlabel("Эпизод")
+        handles, labels = axes[0].get_legend_handles_labels()
+        for ax in axes:
+            if ax.legend_:
+                ax.legend_.remove()
+        fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
+        fig.suptitle("Кривые обучения и динамика качества по эпизодам", y=1.02)
+        plt.tight_layout()
+        self._save_figure("learning_curves")
+        plt.close()
+
+    def plot_step_dynamics(self, scenarios: Iterable[str] | None = None):
+        """Step-level dynamics averaged over episodes for each scenario."""
+        summary = self.load_summary()
+        scenario_names = list(scenarios or summary["scenario"].unique())
+        for scenario_name in scenario_names:
+            scenario_rows = summary[summary["scenario"] == scenario_name]
+            frames = []
+            for _, row in scenario_rows.iterrows():
+                step_df = self.load_step_records(row["scenario"], row["method"])
+                grouped = (
+                    step_df.groupby("step", as_index=False)[
+                        ["social_welfare", "acceptance_rate", "avg_latency"]
+                    ]
+                    .mean()
+                    .assign(method_label=row["method_label"], scenario_label=row["scenario_label"])
+                )
+                frames.append(grouped)
+            dynamics = pd.concat(frames, ignore_index=True)
+
+            fig, axes = plt.subplots(3, 1, figsize=(16, 15), sharex=True)
+            plots = [
+                ("social_welfare", "Социальное благосостояние"),
+                ("acceptance_rate", "Принятие задач, %"),
+                ("avg_latency", "Средняя задержка, мс"),
+            ]
+            for ax, (metric, title) in zip(axes, plots):
+                sns.lineplot(
+                    data=dynamics,
+                    x="step",
+                    y=metric,
+                    hue="method_label",
+                    palette=self.palette,
+                    linewidth=2.4,
+                    ax=ax,
+                )
+                ax.set_title(title)
+                ax.set_xlabel("Шаг симуляции")
+                if metric == "avg_latency":
+                    ax.set_ylim(bottom=0)
+            handles, labels = axes[0].get_legend_handles_labels()
+            for ax in axes:
+                if ax.legend_:
+                    ax.legend_.remove()
+            fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
+            fig.suptitle(
+                f"Пошаговая динамика метрик: {scenario_rows['scenario_label'].iloc[0]}",
+                y=1.01,
+            )
+            plt.tight_layout()
+            self._save_figure(f"{scenario_name}_dynamics")
+            plt.close()
+
+    def plot_load_heatmaps(self, preferred_method: str = "hybrid"):
+        """Heatmaps of node load for the preferred method in each scenario."""
+        summary = self.load_summary()
+        for scenario_name in summary["scenario"].unique():
+            if not (self.results_dir / scenario_name / preferred_method).exists():
+                continue
+            step_df = self.load_step_records(scenario_name, preferred_method)
+            load_cols = [column for column in step_df.columns if column.startswith("load_node_")]
+            if not load_cols:
+                continue
+            heatmap_data = (
+                step_df.groupby("step", as_index=True)[load_cols].mean().T
+            )
+            heatmap_data.index = [index.replace("load_node_", "Узел ") for index in heatmap_data.index]
+            plt.figure(figsize=(18, 6))
+            sns.heatmap(heatmap_data, cmap="YlGnBu", cbar_kws={"label": "Нагрузка"})
+            scenario_label = summary.loc[summary["scenario"] == scenario_name, "scenario_label"].iloc[0]
+            plt.title(f"Распределение нагрузки по узлам: {scenario_label} ({preferred_method})")
+            plt.xlabel("Шаг симуляции")
+            plt.ylabel("")
+            plt.tight_layout()
+            self._save_figure(f"{scenario_name}_{preferred_method}_load_heatmap")
+            plt.close()
+
+    def plot_fairness_welfare_scatter(self):
+        """Scatter plot showing the welfare/fairness trade-off."""
+        summary = self.load_summary()
+        plt.figure(figsize=(12, 8))
+        sns.scatterplot(
+            data=summary,
+            x="mean_gini_payment",
+            y="mean_social_welfare",
+            hue="method_label",
+            style="scenario_label",
+            palette=self.palette,
+            s=180,
+        )
+        plt.axvline(0.3, color="#7c3aed", linestyle="--", linewidth=1.5)
+        plt.xlabel("Коэффициент Джини платежей")
+        plt.ylabel("Социальное благосостояние")
+        plt.title("Компромисс между справедливостью и эффективностью")
+        plt.tight_layout()
+        self._save_figure("fairness_welfare_scatter")
+        plt.close()
+
+    def build_all(self):
+        """Build the complete chapter artifact set."""
+        self.export_tables()
+        self.plot_method_overview()
+        self.plot_learning_curves()
+        self.plot_step_dynamics()
+        self.plot_load_heatmaps()
+        self.plot_fairness_welfare_scatter()
+
+
+if __name__ == "__main__":
+    ResultsVisualizer().build_all()

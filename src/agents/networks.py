@@ -27,7 +27,12 @@ class GRUAgent(nn.Module):
             hidden: [batch_size, hidden_size]
         """
         if hidden is None:
-            hidden = torch.zeros(obs.size(0), self.hidden_size)
+            hidden = torch.zeros(
+                obs.size(0),
+                self.hidden_size,
+                device=obs.device,
+                dtype=obs.dtype,
+            )
         
         # GRU слой
         gru_out, hidden = self.gru(obs, hidden.unsqueeze(0))
@@ -42,43 +47,37 @@ class GRUAgent(nn.Module):
 class MixingNetwork(nn.Module):
     """Mixing Network для объединения локальных Q-функций в глобальную"""
     
-    def __init__(self, num_agents: int, num_actions: int, hidden_size: int):
+    def __init__(self, num_agents: int, state_size: int, hidden_size: int):
         super().__init__()
         self.num_agents = num_agents
-        self.num_actions = num_actions
+        self.state_size = state_size
+        self.hidden_size = hidden_size
         
-        # Гиперсеть для генерации весов
-        self.hyper_w = nn.Linear(num_agents, num_agents * hidden_size)
-        self.hyper_b = nn.Linear(num_agents, hidden_size)
-        
-        # Финальный слой
-        self.fc = nn.Linear(hidden_size, num_actions)
+        self.hyper_w1 = nn.Linear(state_size, num_agents * hidden_size)
+        self.hyper_b1 = nn.Linear(state_size, hidden_size)
+        self.hyper_w2 = nn.Linear(state_size, hidden_size)
+        self.hyper_b2 = nn.Sequential(
+            nn.Linear(state_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 1),
+        )
     
-    def forward(self, q_values: torch.Tensor, state: torch.Tensor = None):
+    def forward(self, agent_qs: torch.Tensor, state: torch.Tensor):
         """
         Args:
-            q_values: [batch_size, num_agents, num_actions]
-            state: [batch_size, state_size] (опционально)
+            agent_qs: [batch_size, num_agents]
+            state: [batch_size, state_size]
         
         Returns:
-            global_q: [batch_size, num_actions]
+            global_q: [batch_size]
         """
-        batch_size = q_values.size(0)
-        
-        # Линейное объединение с неотрицательными весами
-        # Это обеспечивает монотонность
-        w = F.softmax(self.hyper_w(state), dim=1)  # [batch, num_agents * hidden]
-        b = self.hyper_b(state)  # [batch, hidden]
-        
-        # Reshape и объединение
-        w = w.view(batch_size, self.num_agents, -1)  # [batch, num_agents, hidden]
-        q_vals = q_values[:, :, 0]  # Берём первое действие для простоты
-        
-        # Взвешенная сумма
-        mixed = torch.sum(w * q_vals.unsqueeze(2), dim=1)  # [batch, hidden]
-        mixed = mixed + b
-        
-        # Финальный выход
-        global_q = self.fc(F.relu(mixed))
-        
-        return global_q
+        batch_size = agent_qs.size(0)
+
+        w1 = torch.abs(self.hyper_w1(state)).view(batch_size, self.num_agents, self.hidden_size)
+        b1 = self.hyper_b1(state).view(batch_size, 1, self.hidden_size)
+        hidden = F.elu(torch.bmm(agent_qs.unsqueeze(1), w1) + b1)
+
+        w2 = torch.abs(self.hyper_w2(state)).view(batch_size, self.hidden_size, 1)
+        b2 = self.hyper_b2(state).view(batch_size, 1, 1)
+        q_tot = torch.bmm(hidden, w2) + b2
+        return q_tot.view(batch_size)

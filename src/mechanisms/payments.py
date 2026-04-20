@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple
+from .auction import VCGAuctioneer
 
 def calculate_vcg_payments(
     allocation: np.ndarray,  # Binary matrix [m x n]: allocation[i][j] = 1 if device i uses edge j
@@ -18,57 +19,13 @@ def calculate_vcg_payments(
         payments: вектор платежей [m]
         total_sw: итоговое социальное благосустояние
     """
-    m, n = allocation.shape  # m - устройства, n - узлы
-    
-    # Социальное благосустояние с текущим распределением
-    current_sw = np.sum(allocation * utility_matrix) - np.sum(allocation * cost_matrix)
-    
-    # Платежи VCG
-    payments = np.zeros(m)
-    
-    for i in range(m):
-        # Создать поддельное распределение без устройства i
-        allocation_without_i = allocation.copy()
-        allocation_without_i[i] = 0
-        
-        # SW без устройства i
-        sw_without_i = (np.sum(allocation_without_i * utility_matrix) - 
-                       np.sum(allocation_without_i * cost_matrix))
-        
-        # Платёж = внешний эффект
-        payments[i] = sw_without_i - (current_sw - np.sum(allocation[i] * utility_matrix))
-    
-    return payments, current_sw
-
-def update_utility_function(
-    utility_matrix: np.ndarray,
-    success_rate: np.ndarray,
-    learning_rate: float = 0.01
-) -> np.ndarray:
-    """
-    Адаптировать функцию полезности на основе успешных выполнений
-    
-    Args:
-        utility_matrix: текущая матрица полезности [m x n]
-        success_rate: процент успешных выполнений [m x n]
-        learning_rate: скорость адаптации
-    
-    Returns:
-        updated_utility_matrix: обновлённая матрица
-    """
-    # Экспоненциальное скользящее среднее
-    updated = utility_matrix * (1 - learning_rate) + success_rate * learning_rate
-    return np.clip(updated, 0, 1)
-
-def update_cost_function(
-    cost_matrix: np.ndarray,
-    actual_costs: np.ndarray,
-    overload_penalty: np.ndarray,
-    learning_rate: float = 0.01
-) -> np.ndarray:
-    """
-    Адаптировать функцию стоимости на основе реальных затрат
-    """
-    combined_cost = actual_costs + overload_penalty
-    updated = cost_matrix * (1 - learning_rate) + combined_cost * learning_rate
-    return np.clip(updated, 0, 10)
+    num_devices, num_nodes = allocation.shape
+    auctioneer = VCGAuctioneer(num_devices, num_nodes)
+    social_welfare = auctioneer.compute_social_welfare(utility_matrix, cost_matrix, allocation)
+    payments = auctioneer._compute_vcg_payments(
+        allocation,
+        utility_matrix,
+        cost_matrix,
+        current_sw=social_welfare,
+    )
+    return payments, social_welfare
