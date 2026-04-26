@@ -38,20 +38,18 @@ MA-VCG-QMIX/
 │   │   └── experience_buffer.py
 │   ├── learning/
 │   │   ├── trainer.py
+│   │   ├── benchmark.py
 │   │   ├── simulator.py
 │   │   └── reward_manager.py
 │   └── utils/
 │       ├── logger.py
 │       └── visualization.py
 ├── tests/
+│   ├── test_benchmark.py
 │   ├── test_vcg.py
 │   ├── test_qmix.py
 │   └── test_integration.py
-├── experiments/
-│   ├── scenario_1_baseline.py
-│   ├── scenario_2_high_load.py
-│   ├── scenario_3_heterogeneous.py
-│   └── scenario_4_dynamic.py
+├── experiments/results/
 ├── visualization/
 │   └── plot_results.py
 └── main_run_all_scenarios.py
@@ -60,15 +58,13 @@ MA-VCG-QMIX/
 ## Запуск проекта
 
 ```bash
-pip install -r requirements.txt
-python experiments/scenario_1_baseline.py
-python visualization/plot_results.py
+python3 -m pip install -r requirements.txt
 ```
 
-Полный прогон всех сценариев:
+Полный воспроизводимый прогон главы 6:
 
 ```bash
-python main_run_all_scenarios.py
+python3 main_run_all_scenarios.py --results-dir experiments/results/chapter6 --num-seeds 5
 ```
 
 Тесты:
@@ -77,7 +73,16 @@ python main_run_all_scenarios.py
 pytest -q
 ```
 
-Результаты сохраняются в `experiments/results/`.
+## Артефакты главы 6
+
+После полного прогона автоматически формируются:
+
+- `experiments/results/chapter6/summary_by_seed.csv` — результаты по каждому `seed`;
+- `experiments/results/chapter6/summary.csv` — агрегированные метрики `mean/std/95% CI`;
+- `experiments/results/chapter6/tables/*.tex` — готовые таблицы для LaTeX;
+- `experiments/results/chapter6/plots/*.png` и `*.pdf` — графики для диссертации.
+
+При необходимости можно передать `--dissertation-root /path/to/SPbU-Phd-LaTeX-Dissertation`, и тогда таблицы и рисунки будут дополнительно синхронизированы в структуру диссертации.
 
 ## Ограничения прототипа
 

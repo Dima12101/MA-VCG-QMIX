@@ -3,7 +3,6 @@
 """
 
 import numpy as np
-from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from ..environment.edge_node import EdgeNode
@@ -138,76 +137,47 @@ class VCGAuctioneer:
                 best_future_gain[idx + 1] + device_options[ordered_devices[idx]][0][1]
             )
 
-        @lru_cache(maxsize=None)
-        def best_value(
-            idx: int,
-            cpu_state: Tuple[int, ...],
-            memory_state: Tuple[int, ...],
-        ) -> float:
+        best_score = 0.0
+        best_choices = np.full(m, -1, dtype=int)
+        current_choices = np.full(m, -1, dtype=int)
+        cpu_state = list(remaining_cpu)
+        memory_state = list(remaining_memory)
+
+        def search(idx: int, current_score: float) -> None:
+            nonlocal best_score, best_choices
             if idx >= len(ordered_devices):
-                return 0.0
-
-            upper_bound = best_future_gain[idx]
-            if upper_bound <= 0:
-                return 0.0
-
-            best = best_value(idx + 1, cpu_state, memory_state)
-            device_id = ordered_devices[idx]
-            for node_id, net_value, cpu_req, mem_req in device_options[device_id]:
-                if cpu_state[node_id] < cpu_req or memory_state[node_id] < mem_req:
-                    continue
-                new_cpu_state = list(cpu_state)
-                new_memory_state = list(memory_state)
-                new_cpu_state[node_id] -= cpu_req
-                new_memory_state[node_id] -= mem_req
-                candidate = net_value + best_value(
-                    idx + 1,
-                    tuple(new_cpu_state),
-                    tuple(new_memory_state),
-                )
-                if candidate > best:
-                    best = candidate
-            return best
-
-        def reconstruct(
-            idx: int,
-            cpu_state: Tuple[int, ...],
-            memory_state: Tuple[int, ...],
-        ) -> None:
-            if idx >= len(ordered_devices):
+                if current_score > best_score + 1e-9:
+                    best_score = current_score
+                    best_choices = current_choices.copy()
                 return
 
-            target_value = best_value(idx, cpu_state, memory_state)
-            skip_value = best_value(idx + 1, cpu_state, memory_state)
-            if skip_value >= target_value - 1e-9:
-                reconstruct(idx + 1, cpu_state, memory_state)
+            # Admissible upper bound: each remaining device contributes at most
+            # its best feasible net value in an unconstrained future.
+            if current_score + best_future_gain[idx] <= best_score + 1e-9:
                 return
 
             device_id = ordered_devices[idx]
+
+            # Try allocations first to obtain a strong incumbent early.
             for node_id, net_value, cpu_req, mem_req in device_options[device_id]:
                 if cpu_state[node_id] < cpu_req or memory_state[node_id] < mem_req:
                     continue
-                new_cpu_state = list(cpu_state)
-                new_memory_state = list(memory_state)
-                new_cpu_state[node_id] -= cpu_req
-                new_memory_state[node_id] -= mem_req
-                candidate = net_value + best_value(
-                    idx + 1,
-                    tuple(new_cpu_state),
-                    tuple(new_memory_state),
-                )
-                if candidate >= target_value - 1e-9:
-                    allocation[device_id, node_id] = 1
-                    reconstruct(
-                        idx + 1,
-                        tuple(new_cpu_state),
-                        tuple(new_memory_state),
-                    )
-                    return
+                current_choices[device_id] = node_id
+                cpu_state[node_id] -= cpu_req
+                memory_state[node_id] -= mem_req
+                search(idx + 1, current_score + net_value)
+                memory_state[node_id] += mem_req
+                cpu_state[node_id] += cpu_req
+                current_choices[device_id] = -1
 
-            reconstruct(idx + 1, cpu_state, memory_state)
+            # Skipping the device remains a valid exact branch.
+            search(idx + 1, current_score)
 
-        reconstruct(0, remaining_cpu, remaining_memory)
+        search(0, 0.0)
+
+        for device_id, node_id in enumerate(best_choices):
+            if node_id >= 0:
+                allocation[device_id, node_id] = 1
         return allocation
     
     def _compute_vcg_payments(
@@ -253,8 +223,12 @@ class VCGAuctioneer:
             sw_without_i = self.compute_social_welfare(utility_matrix, cost_matrix, allocation_without_i)
             
             # Платёж = внешний эффект
+            chosen_nodes = allocation[i].astype(bool)
             current_contribution = float(
-                np.sum(allocation[i] * (utility_matrix[i] - cost_matrix[i]))
+                np.sum(
+                    np.asarray(utility_matrix[i], dtype=float)[chosen_nodes]
+                    - np.asarray(cost_matrix[i], dtype=float)[chosen_nodes]
+                )
             )
             payments[i] = max(0.0, sw_without_i - (current_sw - current_contribution))
 

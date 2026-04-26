@@ -44,6 +44,8 @@ class EdgeComputingSystem:
         self.tasks = {}
         self.failures_triggered = False
         self._pending_round: Optional[Dict] = None
+        self.last_arrival_rate = 0.0
+        self.last_load_spike_active = False
         
         # Инициализировать узлы и устройства
         self._initialize_network()
@@ -132,6 +134,8 @@ class EdgeComputingSystem:
         self.tasks = {}
         self.failures_triggered = False
         self._pending_round = None
+        self.last_arrival_rate = 0.0
+        self.last_load_spike_active = False
         [device.reset() for device in self.devices]
         [node.reset() for node in self.nodes]
 
@@ -219,14 +223,32 @@ class EdgeComputingSystem:
             'accepted': len(accepted_tasks),
             'rejected': len(rejected_tasks),
             'completed': len(completed_tasks),
+            'generated': len(self.tasks),
         }
+
+        completed_before_deadline = sum(
+            1
+            for task, latency in zip(completed_tasks, latencies)
+            if latency <= task.deadline
+        )
+        load_imbalance = float(np.std([node.load for node in self.nodes]))
+        failed_nodes = int(sum(node.is_failed for node in self.nodes))
         
         # Определение метрик
         metrics = {
             # Метрики производительности
             'avg_latency': float(np.mean(latencies)) if latencies else 0.0,
             'acceptance_rate': info['accepted'] / max(len(self.tasks), 1) * 100,
+            'drop_rate': info['rejected'] / max(len(self.tasks), 1),
             'resource_utilization': [node.load for node in self.nodes],
+            'load_imbalance': load_imbalance,
+            'deadline_success_rate': (
+                completed_before_deadline / max(len(completed_tasks), 1)
+                if completed_tasks
+                else 0.0
+            ),
+            'completed_before_deadline': completed_before_deadline,
+            'deadline_violations': max(len(completed_tasks) - completed_before_deadline, 0),
             # Метрики справедливости
             'gini_payment': self.auctioneer.compute_gini_coefficient(realized_payments),
             'fairness_index': self.auctioneer.compute_fairness_index(realized_allocation),
@@ -236,6 +258,9 @@ class EdgeComputingSystem:
                 cost_matrix,
                 realized_allocation,
             ),
+            'arrival_rate': self.last_arrival_rate,
+            'load_spike_active': float(self.last_load_spike_active),
+            'failed_nodes': failed_nodes,
         }
         self._pending_round = None
 
@@ -268,9 +293,16 @@ class EdgeComputingSystem:
         base_rate = self.env_config.task_lambda_arrival * (
             1 + self.env_config.arrival_amplitude * np.sin(phase)
         )
-        if random.random() < self.env_config.load_spike_probability:
+        spike_active = any(
+            start_step <= self.current_time <= end_step
+            for start_step, end_step in self.env_config.load_spike_windows
+        )
+        if spike_active or random.random() < self.env_config.load_spike_probability:
             base_rate *= self.env_config.load_spike_multiplier
-        return max(0.0, base_rate)
+            spike_active = True
+        self.last_arrival_rate = max(0.0, base_rate)
+        self.last_load_spike_active = spike_active
+        return self.last_arrival_rate
 
     def _generate_tasks(self):
         """Сгенерировать новые задачи по Пуассоновскому распределению."""

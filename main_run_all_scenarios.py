@@ -1,60 +1,90 @@
-"""
-Главный скрипт для запуска всех 4 сценариев подряд
-"""
+"""Reproducible pipeline for the chapter 6 benchmark suite."""
 
-import sys
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 
-# Добавить src в путь
-sys.path.insert(0, str(Path(__file__).parent))
+from src.learning.benchmark import BenchmarkRunner
+from visualization.plot_results import ResultsVisualizer
 
-from experiments.scenario_1_baseline import run_baseline_scenario
-from experiments.scenario_2_high_load import run_high_load_scenario
-from experiments.scenario_3_heterogeneous import run_heterogeneous_scenario
-from experiments.scenario_4_dynamic import run_dynamic_scenario
+
+def _default_dissertation_root() -> Path | None:
+    repo_root = Path(__file__).resolve().parent
+    candidate = repo_root.parent.parent / "диссертация" / "SPbU-Phd-LaTeX-Dissertation"
+    return candidate if candidate.exists() else None
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the full chapter 6 benchmark suite and build dissertation artifacts."
+    )
+    parser.add_argument(
+        "--results-dir",
+        default="experiments/results/validation",
+        help="Directory for raw benchmark outputs and aggregated artifacts.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Base seed for the benchmark suite.",
+    )
+    parser.add_argument(
+        "--num-seeds",
+        type=int,
+        default=5,
+        help="Number of independent seed runs per scenario and method.",
+    )
+    parser.add_argument(
+        "--dissertation-root",
+        default=str(_default_dissertation_root()) if _default_dissertation_root() else None,
+        help="Optional path to the dissertation repository root for automatic artifact sync.",
+    )
+    return parser.parse_args()
+
 
 def main():
-    """Запустить все сценарии"""
-    
-    print("\n" + "=" * 80)
-    print("INTEGRATED EDGE RESOURCE MANAGEMENT SYSTEM - ALL SCENARIOS")
-    print("=" * 80 + "\n")
-    
-    results = {}
-    
-    # Запустить каждый сценарий
-    scenarios = [
-        ("Baseline", run_baseline_scenario),
-        ("High Load", run_high_load_scenario),
-        ("Heterogeneous", run_heterogeneous_scenario),
-        ("Dynamic", run_dynamic_scenario),
-    ]
-    
-    for scenario_name, scenario_func in scenarios:
-        print(f"\n{'#' * 80}")
-        print(f"# Running: {scenario_name}")
-        print(f"{'#' * 80}\n")
-        
-        try:
-            result = scenario_func()
-            results[scenario_name] = {"success": True, "result": result}
-            print(f"\n{scenario_name} scenario completed successfully.")
-        except Exception as e:
-            print(f"\n{scenario_name} scenario failed.")
-            print(f"Error: {str(e)}")
-            results[scenario_name] = {"success": False, "result": None}
-    
-    # Итоговый отчет
-    print("\n" + "=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
-    
-    for scenario_name, result in results.items():
-        status = "COMPLETED" if result["success"] else "FAILED"
-        print(f"{scenario_name}: {status}")
-    
-    print("\nAll results saved to: experiments/results/")
-    print("Generate plots with: python visualization/plot_results.py")
+    args = parse_args()
+    dissertation_root = Path(args.dissertation_root) if args.dissertation_root else None
 
-if __name__ == '__main__':
+    print("\n" + "=" * 88)
+    print("CHAPTER 6 BENCHMARK PIPELINE")
+    print("=" * 88)
+    print(f"Results directory : {args.results_dir}")
+    print(f"Base seed         : {args.seed}")
+    print(f"Seed runs         : {args.num_seeds}")
+    print(
+        "Dissertation sync : "
+        + (str(dissertation_root) if dissertation_root is not None else "disabled")
+    )
+    print("=" * 88 + "\n")
+
+    runner = BenchmarkRunner(results_root=args.results_dir)
+    summary = runner.run_suite(seed=args.seed, num_seeds=args.num_seeds)
+
+    visualizer = ResultsVisualizer(
+        results_dir=args.results_dir,
+        dissertation_root=dissertation_root,
+    )
+    visualizer.build_all()
+
+    print("Итоговая сводка по сценариям и методам:")
+    print(
+        summary[
+            [
+                "scenario_label",
+                "method_label",
+                "mean_social_welfare",
+                "mean_avg_latency",
+                "mean_deadline_success_rate",
+            ]
+        ].to_string(index=False)
+    )
+    print(f"\nАртефакты сохранены в: {Path(args.results_dir).resolve()}")
+    if dissertation_root is not None:
+        print(f"Таблицы и изображения синхронизированы в: {dissertation_root}")
+
+
+if __name__ == "__main__":
     main()

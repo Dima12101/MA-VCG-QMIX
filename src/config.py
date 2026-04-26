@@ -15,6 +15,7 @@ class EnvironmentConfig:
     arrival_amplitude: float = 0.3
     load_spike_probability: float = 0.0
     load_spike_multiplier: float = 2.5
+    load_spike_windows: Tuple[Tuple[int, int], ...] = field(default_factory=tuple)
     failure_fraction: float = 0.0
     failure_start_step: int = 0
     failure_recovery_steps: int = 0
