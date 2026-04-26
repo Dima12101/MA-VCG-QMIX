@@ -37,9 +37,17 @@ class Simulator:
         self.env = EdgeComputingSystem(self.env_config, self.edge_config, self.task_config, self.auction_config)
 
         # Создать сеть обучения
-        self.trainer = QMIXTrainer(self.env_config.num_nodes,
-                                   self.network_config,
-                                   self.training_config)
+        effective_network_config = NetworkConfig(
+            hidden_size=self.network_config.hidden_size,
+            obs_size=self.env.observation_size,
+            action_size=self.network_config.action_size,
+            state_size=self.env_config.num_nodes * self.env.observation_size,
+        )
+        self.trainer = QMIXTrainer(
+            self.env_config.num_nodes,
+            effective_network_config,
+            self.training_config,
+        )
     
     def run(self): 
         self.results = []

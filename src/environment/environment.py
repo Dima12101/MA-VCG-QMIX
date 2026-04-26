@@ -18,10 +18,16 @@ from ..learning.reward_manager import RewardManager
 class EdgeComputingSystem:
     """Класс для представления моделируемой среды"""
 
+    # Возможные действия агента
     ACTION_ACCEPT = 0
     ACTION_REJECT = 1
     ACTION_PRIORITY_HIGH = 2
     ACTION_PRIORITY_LOW = 3
+
+    # Размерность локального наблюдения агента
+    ACTION_SIZE = 4
+    BASE_OBSERVATION_SIZE = 5
+    AUCTION_FEATURE_SIZE = 4
     
     def __init__(self, 
                  env_config: EnvironmentConfig,
@@ -37,6 +43,7 @@ class EdgeComputingSystem:
         self.task_counter = 0
         self.tasks = {}
         self.failures_triggered = False
+        self._pending_round: Optional[Dict] = None
         
         # Инициализировать узлы и устройства
         self._initialize_network()
@@ -124,8 +131,52 @@ class EdgeComputingSystem:
         self.task_counter = 0
         self.tasks = {}
         self.failures_triggered = False
+        self._pending_round = None
         [device.reset() for device in self.devices]
         [node.reset() for node in self.nodes]
+
+    @property
+    def observation_size(self) -> int:
+        return self.BASE_OBSERVATION_SIZE + self.AUCTION_FEATURE_SIZE + self.ACTION_SIZE
+
+    def _ensure_round_prepared(self):
+        if self._pending_round is not None:
+            return
+
+        self.current_time += 1
+        self._update_node_failures()
+        self.tasks = {}
+
+        # Фаза 1: Устройства отправляют заявки на выполнение задач.
+        self._generate_tasks()
+
+        # Фаза 2: Оценка полезности и стоимости для текущего пула.
+        utility_matrix, cost_matrix = self._evaluate_tasks()
+        task_vector = self._build_task_vector()
+
+        # Фаза 3.1: Аукционный контур формирует allocation, payments и action masks
+        auction_result = self.auctioneer.run_auction(
+            utility_matrix,
+            cost_matrix,
+            tasks=task_vector,
+            nodes=self.nodes,
+        )
+        action_masks = self._build_action_masks(auction_result.allocation)
+        auction_features = self._build_auction_features(
+            allocation=auction_result.allocation,
+            payments=auction_result.payments,
+        )
+        observations = self._compose_observations(action_masks, auction_features)
+
+        self._pending_round = {
+            "tasks": task_vector,
+            "utility_matrix": utility_matrix,
+            "cost_matrix": cost_matrix,
+            "auction_result": auction_result,
+            "action_masks": action_masks,
+            "auction_features": auction_features,
+            "observations": observations,
+        }
     
     def step(self, actions: List[int]) -> Tuple[np.ndarray, Dict, Dict]:
         """
@@ -139,41 +190,31 @@ class EdgeComputingSystem:
         """
         if len(actions) != len(self.nodes):
             raise ValueError("Число действий должно совпадать с числом edge-узлов.")
+        self._ensure_round_prepared()
+        pending_round = self._pending_round
+        utility_matrix = pending_round["utility_matrix"]
+        cost_matrix = pending_round["cost_matrix"]
+        auction_result = pending_round["auction_result"]
 
-        self.current_time += 1
-        self._update_node_failures()
-        self.tasks = {}
-
-        # Фаза 1: Устройства отправляют заявку на выполнение задачи
-        self._generate_tasks()
-
-        # Фаза 2: Оценка полезности и стоимости выполнения задач
-        utility_matrix, cost_matrix = self._evaluate_tasks()
-
-        # Фаза 3.1: Распределение задач
-        auction_result = self.auctioneer.run_auction(
-            utility_matrix,
-            cost_matrix,
-            tasks=self._build_task_vector(),
-            nodes=self.nodes,
-        )
         accepted_tasks, rejected_tasks, assignments, realized_allocation, realized_payments = self._distribute_tasks(
             auction_result.allocation,
             auction_result.payments,
-            actions,
-        )
-        
-        # Фаза 3.2: Определение наград
-        rewards = self._compute_rewards(
-            assignments,
-            realized_payments,
             utility_matrix,
             cost_matrix,
-            realized_allocation,
+            actions,
         )
-        
-        # Выполнение задач
+
+        # Фаза 3.2: Исполнение очередей и сбор фактических метрик.
         completed_tasks, latencies = self._execute_tasks()
+        rewards = self._compute_rewards(
+            accepted_tasks=accepted_tasks,
+            rejected_tasks=rejected_tasks,
+            completed_tasks=completed_tasks,
+            realized_payments=realized_payments,
+            utility_matrix=utility_matrix,
+            cost_matrix=cost_matrix,
+            realized_allocation=realized_allocation,
+        )
         info = {
             'accepted': len(accepted_tasks),
             'rejected': len(rejected_tasks),
@@ -196,6 +237,7 @@ class EdgeComputingSystem:
                 realized_allocation,
             ),
         }
+        self._pending_round = None
 
         return rewards, info, metrics
 
@@ -245,6 +287,9 @@ class EdgeComputingSystem:
                     deadline=random.randint(self.task_config.deadline['min'], self.task_config.deadline['max']),
                     arrival_time=self.current_time,
                     importance=self.devices[device_id].importance,
+                    utility_scale=self.task_config.utility_scale,
+                    utility_cpu_weight=self.task_config.utility_cpu_weight,
+                    utility_memory_weight=self.task_config.utility_memory_weight,
                 )
                 self.devices[device_id].submit_task(task)
                 self.tasks[device_id] = task
@@ -292,11 +337,103 @@ class EdgeComputingSystem:
             cost_matrix.append(cost_row)
 
         return np.array(utility_matrix, dtype=float), np.array(cost_matrix, dtype=float)
+
+    def _build_action_masks(self, allocation: np.ndarray) -> np.ndarray:
+        """Построить маски допустимых действий для каждого узла."""
+        masks = np.zeros((len(self.nodes), self.ACTION_SIZE), dtype=np.float32)
+        for node in self.nodes:
+            assigned_count = int(np.sum(allocation[:, node.id]))
+            if node.is_failed:
+                masks[node.id, self.ACTION_REJECT] = 1.0
+                continue
+            if assigned_count == 0:
+                masks[node.id, self.ACTION_ACCEPT] = 1.0
+                continue
+            masks[node.id, :] = 1.0
+        return masks
+
+    def _estimated_service_time_ms(self, task: Task, node_id: int) -> float:
+        """Оценить полное время обслуживания задачи на конкретном узле."""
+        latency, _ = self._device_node_latency(task.device_id, node_id)
+        if not np.isfinite(latency):
+            return float("inf")
+        return task.processing_time_ms(self.nodes[node_id].cpu_capacity) + latency
+
+    def _build_auction_features(
+        self,
+        allocation: np.ndarray,
+        payments: np.ndarray,
+    ) -> np.ndarray:
+        """Сформировать локальный аукционный контекст для наблюдений агентов."""
+        features = np.zeros((len(self.nodes), self.AUCTION_FEATURE_SIZE), dtype=np.float32)
+        payment_scale = max(float(np.max(payments)) if payments.size else 0.0, 1.0)
+        device_scale = max(self.env_config.num_devices, 1)
+
+        for node in self.nodes:
+            assigned_device_ids = np.flatnonzero(allocation[:, node.id])
+            if assigned_device_ids.size == 0:
+                continue
+
+            assigned_tasks = [self.tasks[int(device_id)] for device_id in assigned_device_ids]
+            total_cpu = sum(task.cpu_required for task in assigned_tasks)
+            total_service_ratio = np.mean([
+                min(2.0, self._estimated_service_time_ms(task, node.id) / max(task.deadline, 1.0))
+                for task in assigned_tasks
+            ])
+
+            features[node.id] = np.array(
+                [
+                    len(assigned_tasks) / device_scale,
+                    float(np.mean(payments[assigned_device_ids])) / payment_scale,
+                    min(total_cpu / max(node.cpu_capacity, 1), 1.5),
+                    float(total_service_ratio),
+                ],
+                dtype=np.float32,
+            )
+
+        return features
+
+    def _compose_observations(
+        self,
+        action_masks: np.ndarray,
+        auction_features: np.ndarray,
+    ) -> np.ndarray:
+        """Собрать расширенные наблюдения из локального состояния и аукционных сигналов."""
+        observations = []
+        for node in self.nodes:
+            neighbors = [
+                neighbor_id
+                for neighbor_type, neighbor_id in self.network.neighbors(self._graph_node_id(node.id))
+                if neighbor_type == "node"
+            ]
+            neighbor_load = 0.0
+            if neighbors:
+                neighbor_load = float(np.mean([self.nodes[n_id].load for n_id in neighbors]))
+
+            base_obs = [
+                node.cpu_available / max(node.cpu_capacity, 1),
+                node.memory_available / max(node.memory_capacity, 1),
+                min(len(node.task_queue) / 10.0, 1.0),
+                neighbor_load,
+                1.0 if node.is_failed else 0.0,
+            ]
+            obs = np.concatenate(
+                [
+                    np.array(base_obs, dtype=np.float32),
+                    auction_features[node.id],
+                    action_masks[node.id],
+                ]
+            )
+            observations.append(obs)
+
+        return np.array(observations, dtype=np.float32)
     
     def _distribute_tasks(
         self,
         allocation: np.ndarray,
         payments: np.ndarray,
+        utility_matrix: np.ndarray,
+        cost_matrix: np.ndarray,
         actions: List[int],
     ) -> Tuple[List[Task], List[Task], Dict[int, List[Task]], np.ndarray, np.ndarray]:
         """Назначение задач согласно распределению и стратегий узлов."""
@@ -329,6 +466,13 @@ class EdgeComputingSystem:
             elif action == self.ACTION_PRIORITY_LOW:
                 task.priority = TaskPriority.LOW
 
+            latency, _ = self._device_node_latency(device_id, node_id)
+            task.assigned_node_id = node_id
+            task.allocated_payment = float(payments[device_id])
+            task.welfare_contribution = float(
+                utility_matrix[device_id, node_id] - cost_matrix[device_id, node_id]
+            )
+            task.allocation_latency_ms = 0.0 if not np.isfinite(latency) else float(latency)
             self.nodes[node_id].accept_task(task)
             self.devices[device_id].record_payment(payments[device_id])
             accepted_tasks.append(task)
@@ -355,36 +499,14 @@ class EdgeComputingSystem:
     
     def _compute_rewards(
         self,
-        assignments: Dict[int, List[Task]],
+        accepted_tasks: List[Task],
+        rejected_tasks: List[Task],
+        completed_tasks: List[Task],
         realized_payments: np.ndarray,
         utility_matrix: np.ndarray,
         cost_matrix: np.ndarray,
         realized_allocation: np.ndarray,
     ) -> np.ndarray:
-        node_values = np.zeros(len(self.nodes), dtype=float)
-        node_revenues = np.zeros(len(self.nodes), dtype=float)
-        node_costs = np.zeros(len(self.nodes), dtype=float)
-        node_penalties = np.zeros(len(self.nodes), dtype=float)
-
-        for node_id, assigned_tasks in assignments.items():
-            node = self.nodes[node_id]
-            for task in assigned_tasks:
-                node_values[node_id] += utility_matrix[task.device_id, node_id]
-                node_revenues[node_id] += realized_payments[task.device_id]
-                node_costs[node_id] += cost_matrix[task.device_id, node_id]
-                estimated_time_ms = task.processing_time_ms(node.cpu_capacity)
-                if estimated_time_ms > task.deadline:
-                    node_penalties[node_id] += (estimated_time_ms - task.deadline) / max(task.deadline, 1.0)
-
-        local_rewards = np.array([
-            self.reward_manager.compute_local_reward(
-                local_value=node_values[node.id],
-                operational_cost=node_costs[node.id],
-                sla_penalty=node_penalties[node.id],
-            )
-            for node in self.nodes
-        ], dtype=float)
-
         social_welfare = self.auctioneer.compute_social_welfare(
             utility_matrix,
             cost_matrix,
@@ -392,34 +514,40 @@ class EdgeComputingSystem:
         )
         fairness_index = self.auctioneer.compute_fairness_index(realized_allocation)
         gini_coefficient = self.auctioneer.compute_gini_coefficient(realized_payments)
+        deadline_violations = 0
+        for task in accepted_tasks:
+            if task.assigned_node_id is None:
+                continue
+            node = self.nodes[task.assigned_node_id]
+            estimated_service_time = (
+                task.processing_time_ms(node.cpu_capacity) + task.allocation_latency_ms
+            )
+            if estimated_service_time > task.deadline:
+                deadline_violations += 1
+
+        drop_rate = len(rejected_tasks) / max(len(self.tasks), 1)
+        violation_rate = deadline_violations / max(len(accepted_tasks), 1) if accepted_tasks else 0.0
+        load_imbalance = float(np.std([node.load for node in self.nodes]))
+        completed_payments = np.array(
+            [task.allocated_payment for task in completed_tasks],
+            dtype=float,
+        )
+        completed_welfare = np.array(
+            [task.welfare_contribution for task in completed_tasks],
+            dtype=float,
+        )
         return self.reward_manager.combine_rewards(
-            local_rewards=local_rewards,
-            node_revenues=node_revenues,
             social_welfare=social_welfare,
             fairness_index=fairness_index,
             gini_coefficient=gini_coefficient,
+            deadline_violation_rate=violation_rate,
+            drop_rate=drop_rate,
+            load_imbalance=load_imbalance,
+            completed_payments=completed_payments,
+            completed_welfare=completed_welfare,
         )
     
     def get_observations(self) -> np.ndarray:
-        """Get local observations for each node."""
-        observations = []
-        for node in self.nodes:
-            neighbors = [
-                neighbor_id
-                for neighbor_type, neighbor_id in self.network.neighbors(self._graph_node_id(node.id))
-                if neighbor_type == "node"
-            ]
-            neighbor_load = 0.0
-            if neighbors:
-                neighbor_load = float(np.mean([self.nodes[n_id].load for n_id in neighbors]))
-
-            obs = [
-                node.cpu_available / node.cpu_capacity,
-                node.memory_available / node.memory_capacity,
-                min(len(node.task_queue) / 10.0, 1.0),
-                neighbor_load,
-                1.0 if node.is_failed else 0.0,
-            ]
-            observations.append(obs)
-        
-        return np.array(observations, dtype=np.float32)
+        """Вернуть расширенные наблюдения для следующего решения."""
+        self._ensure_round_prepared()
+        return np.array(self._pending_round["observations"], copy=True)

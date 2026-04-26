@@ -40,6 +40,9 @@ class TaskConfig:
     memory: Dict[str, int] = field(default_factory=lambda: {"min": 1, "max": 16})
     data_size: Dict[str, int] = field(default_factory=lambda: {"min": 1, "max": 30})
     deadline: Dict[str, int] = field(default_factory=lambda: {"min": 500, "max": 10000})
+    utility_scale: float = 1.0
+    utility_cpu_weight: float = 1.0
+    utility_memory_weight: float = 1.0
 
 
 @dataclass
@@ -57,6 +60,9 @@ class NodeConfig:
     transmission_energy_coeff: float = 0.001
     indirect_link_penalty: float = 1.25
     delay_sensitivity: float = 1.0
+    overload_cpu_weight: float = 1.0
+    overload_memory_weight: float = 1.0
+    overload_epsilon: float = 1.0
 
 
 @dataclass
@@ -81,7 +87,7 @@ class NetworkConfig:
     """Параметры нейросетей QMIX."""
 
     hidden_size: int = 64
-    obs_size: int = 5
+    obs_size: int = 13
     action_size: int = 4
     state_size: Optional[int] = None
 

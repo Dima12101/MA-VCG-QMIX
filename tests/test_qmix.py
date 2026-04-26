@@ -3,8 +3,11 @@
 """
 
 import unittest
+import numpy as np
 import torch
+from src.config import NetworkConfig, TrainingConfig
 from src.agents.networks import GRUAgent, MixingNetwork
+from src.learning.trainer import QMIXTrainer
 
 class TestQMIXNetworks(unittest.TestCase):
     """Тесты архитектуры QMIX"""
@@ -35,6 +38,25 @@ class TestQMIXNetworks(unittest.TestCase):
         global_q = mixing_net(q_values, state)
         
         self.assertEqual(global_q.shape, (2,))  # [batch]
+
+    def test_action_mask_is_respected(self):
+        """QMIX не должен выбирать действия вне бинарной маски."""
+        trainer = QMIXTrainer(
+            num_agents=2,
+            network_config=NetworkConfig(obs_size=13, action_size=4, state_size=26),
+            training_config=TrainingConfig(epsilon_start=1.0, epsilon_end=1.0, epsilon_decay=1.0),
+        )
+        observations = np.array(
+            [
+                [0.9, 0.9, 0.0, 0.1, 0.0, 0.2, 0.3, 0.4, 0.5, 0.0, 1.0, 0.0, 0.0],
+                [0.8, 0.7, 0.0, 0.2, 0.0, 0.1, 0.2, 0.3, 0.4, 0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        actions = trainer.select_actions(observations)
+
+        np.testing.assert_array_equal(actions, np.array([1, 3]))
 
 if __name__ == '__main__':
     unittest.main()

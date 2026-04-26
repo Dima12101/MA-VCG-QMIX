@@ -3,6 +3,7 @@
 """
 
 import numpy as np
+from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from ..environment.edge_node import EdgeNode
@@ -73,45 +74,140 @@ class VCGAuctioneer:
     ) -> np.ndarray:
         """
         Вычислить оптимальное распределение задач
-        Используется жадная максимизация социального благосостояния
         с учетом ограничений ресурсов узлов.
+
+        Для сценариев валидации из диссертации используется точный поиск
+        branch-and-bound по устройствам. Это сохраняет корректность свойств
+        статического раунда (эффективность и VCG-платежи) при умеренных
+        размерах экземпляра.
         """
         m, n = utilities.shape
         allocation = np.zeros((m, n), dtype=int)
+        net_values = np.asarray(utilities, dtype=float) - np.asarray(costs, dtype=float)
 
-        remaining_cpu = [None] * n
-        remaining_memory = [None] * n
-        if nodes is not None:
-            remaining_cpu = [node.cpu_available for node in nodes]
-            remaining_memory = [node.memory_available for node in nodes]
+        if tasks is None or nodes is None:
+            best_nodes = np.argmax(net_values, axis=1)
+            for device_id in range(m):
+                if excluded_device is not None and device_id == excluded_device:
+                    continue
+                best_node = int(best_nodes[device_id])
+                best_value = float(net_values[device_id, best_node])
+                if np.isfinite(best_value) and best_value > 0:
+                    allocation[device_id, best_node] = 1
+            return allocation
 
-        candidates = []
+        remaining_cpu = tuple(max(0, node.cpu_available) for node in nodes)
+        remaining_memory = tuple(max(0, node.memory_available) for node in nodes)
+
+        device_options = {}
+        ordered_devices: List[int] = []
         for device_id in range(m):
             if excluded_device is not None and device_id == excluded_device:
                 continue
-            if tasks is not None and tasks[device_id] is None:
+            task = tasks[device_id]
+            if task is None:
                 continue
-            for node_id in range(n):
-                profit = float(utilities[device_id, node_id] - costs[device_id, node_id])
-                if np.isfinite(profit) and profit > 0:
-                    candidates.append((profit, float(utilities[device_id, node_id]), device_id, node_id))
 
-        candidates.sort(reverse=True)
-        assigned_devices = set()
-        for _, _, device_id, node_id in candidates:
-            if device_id in assigned_devices:
-                continue
-            if tasks is not None and nodes is not None:
-                task = tasks[device_id]
-                if task is None:
+            options = []
+            for node_id in range(n):
+                net_value = float(net_values[device_id, node_id])
+                if not np.isfinite(net_value) or net_value <= 0:
                     continue
-                if remaining_cpu[node_id] < task.cpu_required or remaining_memory[node_id] < task.memory_required:
+                if (
+                    task.cpu_required > nodes[node_id].cpu_available
+                    or task.memory_required > nodes[node_id].memory_available
+                ):
                     continue
-                remaining_cpu[node_id] -= task.cpu_required
-                remaining_memory[node_id] -= task.memory_required
-            allocation[device_id, node_id] = 1
-            assigned_devices.add(device_id)
-        
+                options.append((node_id, net_value, task.cpu_required, task.memory_required))
+
+            if options:
+                options.sort(key=lambda option: option[1], reverse=True)
+                device_options[device_id] = tuple(options)
+                ordered_devices.append(device_id)
+
+        if not ordered_devices:
+            return allocation
+
+        ordered_devices.sort(
+            key=lambda device_id: device_options[device_id][0][1],
+            reverse=True,
+        )
+        best_future_gain = [0.0] * (len(ordered_devices) + 1)
+        for idx in range(len(ordered_devices) - 1, -1, -1):
+            best_future_gain[idx] = (
+                best_future_gain[idx + 1] + device_options[ordered_devices[idx]][0][1]
+            )
+
+        @lru_cache(maxsize=None)
+        def best_value(
+            idx: int,
+            cpu_state: Tuple[int, ...],
+            memory_state: Tuple[int, ...],
+        ) -> float:
+            if idx >= len(ordered_devices):
+                return 0.0
+
+            upper_bound = best_future_gain[idx]
+            if upper_bound <= 0:
+                return 0.0
+
+            best = best_value(idx + 1, cpu_state, memory_state)
+            device_id = ordered_devices[idx]
+            for node_id, net_value, cpu_req, mem_req in device_options[device_id]:
+                if cpu_state[node_id] < cpu_req or memory_state[node_id] < mem_req:
+                    continue
+                new_cpu_state = list(cpu_state)
+                new_memory_state = list(memory_state)
+                new_cpu_state[node_id] -= cpu_req
+                new_memory_state[node_id] -= mem_req
+                candidate = net_value + best_value(
+                    idx + 1,
+                    tuple(new_cpu_state),
+                    tuple(new_memory_state),
+                )
+                if candidate > best:
+                    best = candidate
+            return best
+
+        def reconstruct(
+            idx: int,
+            cpu_state: Tuple[int, ...],
+            memory_state: Tuple[int, ...],
+        ) -> None:
+            if idx >= len(ordered_devices):
+                return
+
+            target_value = best_value(idx, cpu_state, memory_state)
+            skip_value = best_value(idx + 1, cpu_state, memory_state)
+            if skip_value >= target_value - 1e-9:
+                reconstruct(idx + 1, cpu_state, memory_state)
+                return
+
+            device_id = ordered_devices[idx]
+            for node_id, net_value, cpu_req, mem_req in device_options[device_id]:
+                if cpu_state[node_id] < cpu_req or memory_state[node_id] < mem_req:
+                    continue
+                new_cpu_state = list(cpu_state)
+                new_memory_state = list(memory_state)
+                new_cpu_state[node_id] -= cpu_req
+                new_memory_state[node_id] -= mem_req
+                candidate = net_value + best_value(
+                    idx + 1,
+                    tuple(new_cpu_state),
+                    tuple(new_memory_state),
+                )
+                if candidate >= target_value - 1e-9:
+                    allocation[device_id, node_id] = 1
+                    reconstruct(
+                        idx + 1,
+                        tuple(new_cpu_state),
+                        tuple(new_memory_state),
+                    )
+                    return
+
+            reconstruct(idx + 1, cpu_state, memory_state)
+
+        reconstruct(0, remaining_cpu, remaining_memory)
         return allocation
     
     def _compute_vcg_payments(
@@ -157,9 +253,11 @@ class VCGAuctioneer:
             sw_without_i = self.compute_social_welfare(utility_matrix, cost_matrix, allocation_without_i)
             
             # Платёж = внешний эффект
-            current_contribution = np.sum(allocation[i] * utility_matrix[i])
+            current_contribution = float(
+                np.sum(allocation[i] * (utility_matrix[i] - cost_matrix[i]))
+            )
             payments[i] = max(0.0, sw_without_i - (current_sw - current_contribution))
-        
+
         return payments
     
     def compute_social_welfare(

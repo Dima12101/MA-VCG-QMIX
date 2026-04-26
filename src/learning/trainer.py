@@ -57,6 +57,20 @@ class QMIXTrainer:
     def add_experience(self, state, actions, rewards, next_state, done):
         """Добавить опыт в буфер"""
         self.buffer.add(state, actions, rewards, next_state, done)
+
+    def _extract_action_mask(self, obs: np.ndarray) -> np.ndarray:
+        """Извлечь бинарную маску допустимых действий из хвоста наблюдения."""
+        mask = np.asarray(obs[-self.action_size:], dtype=np.float32) > 0.5
+        if not np.any(mask):
+            mask = np.zeros(self.action_size, dtype=bool)
+            mask[0] = True
+        return mask
+
+    @staticmethod
+    def _masked_argmax(q_values: torch.Tensor, action_mask: torch.Tensor) -> torch.Tensor:
+        """Выбрать argmax только по допустимым действиям."""
+        masked_q_values = q_values.masked_fill(~action_mask, torch.finfo(q_values.dtype).min)
+        return masked_q_values.argmax(dim=1)
     
     def select_actions(self, obs: np.ndarray) -> np.ndarray:
         """Выбрать действия для каждого агента (ε-жадная стратегия)"""
@@ -65,11 +79,13 @@ class QMIXTrainer:
             for i, agent_net in enumerate(self.agent_networks):
                 obs_tensor = torch.FloatTensor(obs[i:i+1]).unsqueeze(0)
                 q_values, _ = agent_net(obs_tensor)
+                valid_actions = np.flatnonzero(self._extract_action_mask(obs[i]))
                 
                 if np.random.random() < self.epsilon:
-                    action = np.random.randint(0, self.action_size)
+                    action = int(np.random.choice(valid_actions))
                 else:
-                    action = q_values.argmax(dim=1).item()
+                    mask_tensor = torch.BoolTensor(self._extract_action_mask(obs[i])).unsqueeze(0)
+                    action = int(self._masked_argmax(q_values, mask_tensor).item())
                 
                 actions.append(action)
         
@@ -106,7 +122,11 @@ class QMIXTrainer:
             target_q_values = []
             for i, target_net in enumerate(self.target_networks):
                 q_online_next, _ = self.agent_networks[i](next_states[:, i:i+1, :])
-                greedy_next_actions = q_online_next.argmax(dim=1, keepdim=True)
+                next_action_mask = next_states[:, i, -self.action_size:] > 0.5
+                greedy_next_actions = self._masked_argmax(
+                    q_online_next,
+                    next_action_mask,
+                ).unsqueeze(1)
                 q_target_next, _ = target_net(next_states[:, i:i+1, :])
                 target_q = q_target_next.gather(1, greedy_next_actions).squeeze(1)
                 target_q_values.append(target_q)

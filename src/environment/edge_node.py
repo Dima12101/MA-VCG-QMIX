@@ -24,7 +24,10 @@ class EdgeNode:
         self.indirect_link_penalty = config.indirect_link_penalty           # Штраф за не прямое соединение
 
         # Utilities coefficients
-        self.delay_sensitivity = config.delay_sensitivity                   # Чувствительность к задержке        
+        self.delay_sensitivity = config.delay_sensitivity                   # Чувствительность к задержке
+        self.overload_cpu_weight = config.overload_cpu_weight               # Коэффициент mu
+        self.overload_memory_weight = config.overload_memory_weight         # Коэффициент nu
+        self.overload_epsilon = config.overload_epsilon                    # Стабилизатор epsilon
 
         # Tasks
         self.task_queue: Dict[int, Task] = {}

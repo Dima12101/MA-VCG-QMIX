@@ -28,7 +28,6 @@ class TestIntegration(unittest.TestCase):
         torch.manual_seed(0)
 
         env_config = replace(ENV_CONFIG, num_nodes=3, num_devices=5, task_lambda_arrival=3.0)
-        network_config = replace(NETWORK_CONFIG, state_size=env_config.num_nodes * NETWORK_CONFIG.obs_size)
         training_config = replace(
             TRAINING_CONFIG,
             batch_size=1,
@@ -40,6 +39,11 @@ class TestIntegration(unittest.TestCase):
             node_config=NODE_CONFIG,
             task_config=TASK_CONFIG,
             auction_config=AUCTION_CONFIG,
+        )
+        network_config = replace(
+            NETWORK_CONFIG,
+            obs_size=env.observation_size,
+            state_size=env_config.num_nodes * env.observation_size,
         )
         trainer = QMIXTrainer(
             num_agents=env_config.num_nodes,
@@ -62,6 +66,8 @@ class TestIntegration(unittest.TestCase):
         loss = trainer.train_step()
 
         self.assertEqual(rewards.shape, (env_config.num_nodes,))
+        self.assertEqual(current_state.shape, (env_config.num_nodes, env.observation_size))
+        self.assertEqual(next_state.shape, (env_config.num_nodes, env.observation_size))
         self.assertEqual(len(actions), env_config.num_nodes)
         self.assertLessEqual(info["accepted"] + info["rejected"], env_config.num_devices)
         self.assertTrue(np.isfinite(metrics["social_welfare"]))

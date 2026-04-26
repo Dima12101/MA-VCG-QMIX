@@ -59,8 +59,16 @@ class MethodSpec:
 
 
 def _always_accept_policy(observations: np.ndarray, step: int, episode: int) -> np.ndarray:
-    del observations, step, episode
-    return np.array([], dtype=int)
+    del step, episode
+    actions = []
+    for obs in observations:
+        mask = np.asarray(obs[-4:], dtype=np.float32) > 0.5
+        if mask[0]:
+            actions.append(0)
+        else:
+            valid_actions = np.flatnonzero(mask)
+            actions.append(int(valid_actions[0]) if valid_actions.size else 0)
+    return np.array(actions, dtype=int)
 
 
 class BenchmarkRunner:
@@ -184,7 +192,7 @@ class BenchmarkRunner:
     @staticmethod
     def _policy_from_name(name: str) -> PolicyFn:
         if name == "always_accept":
-            return lambda observations, step, episode: np.zeros(len(observations), dtype=int)
+            return _always_accept_policy
         raise ValueError(f"Неизвестная фиксированная политика: {name}")
 
     @staticmethod
@@ -230,7 +238,8 @@ class BenchmarkRunner:
         if method.learning_enabled:
             network_config = replace(
                 NETWORK_CONFIG,
-                state_size=scenario.env_config.num_nodes * NETWORK_CONFIG.obs_size,
+                obs_size=env.observation_size,
+                state_size=scenario.env_config.num_nodes * env.observation_size,
             )
             trainer = QMIXTrainer(
                 num_agents=scenario.env_config.num_nodes,

@@ -45,71 +45,76 @@ class RewardManager:
     def compute_global_reward(
         self,
         social_welfare: float,
+        deadline_violation_rate: float,
+        drop_rate: float,
+        load_imbalance: float,
         fairness_index: float,
-        gini_coefficient: float
+        gini_coefficient: float,
     ) -> float:
         """
         Вычислить глобальное вознаграждение для всей системы
         
         Args:
             social_welfare: социальное благосустояние
+            deadline_violation_rate: доля задач с риском нарушения дедлайна
+            drop_rate: доля отклонённых задач
+            load_imbalance: дисбаланс загрузки узлов
             fairness_index: индекс справедливости
             gini_coefficient: коэффициент Джини
         
         Returns:
             reward: глобальное вознаграждение
         """
-        # SW — основной компонент
-        sw_component = social_welfare
-        
-        # Штраф за несправедливость
-        fairness_penalty = max(0.0, self.fairness_target - fairness_index) * 10
-        
-        # Штраф за неравное распределение платежей
-        gini_penalty = max(0.0, gini_coefficient - self.gini_target) * 5
-        
-        return sw_component - fairness_penalty - gini_penalty
-    
-    def integrate_vcg_payments(
+        sw_component = social_welfare / max(self.num_devices, 1)
+        fairness_penalty = max(0.0, self.fairness_target - fairness_index)
+        gini_penalty = max(0.0, gini_coefficient - self.gini_target)
+        raw_reward = (
+            sw_component
+            - deadline_violation_rate
+            - drop_rate
+            - load_imbalance
+            - fairness_penalty
+            - gini_penalty
+        )
+        return float(np.tanh(raw_reward))
+
+    def compute_auction_reward(
         self,
-        local_rewards: np.ndarray,
-        node_revenues: np.ndarray
-    ) -> np.ndarray:
-        """
-        Интегрировать VCG платежи в локальные вознаграждения
-        
-        Args:
-            local_rewards: локальные вознаграждения [num_agents]
-            node_revenues: агрегированные доходы узлов [num_agents]
-        
-        Returns:
-            integrated_rewards: интегрированные вознаграждения
-        """
-        # Усреднить платежи по всем устройствам
-        positive_revenue = node_revenues[node_revenues > 0]
-        if positive_revenue.size == 0:
-            return local_rewards.copy()
-        avg_payment = np.mean(positive_revenue)
-        
-        # Добавить VCG компоненту к локальным вознаграждениям
-        integrated = local_rewards + self.vcg_weight * (node_revenues / (avg_payment + 1e-8))
-        
-        return integrated
+        completed_payments: np.ndarray,
+        completed_welfare: np.ndarray,
+    ) -> float:
+        """Собрать аукционный компонент вознаграждения по завершённым задачам."""
+        payment_signal = float(np.sum(completed_payments)) if completed_payments.size else 0.0
+        welfare_signal = float(np.sum(completed_welfare)) if completed_welfare.size else 0.0
+        raw_reward = (payment_signal + welfare_signal) / max(self.num_devices, 1)
+        return float(np.tanh(raw_reward))
 
     def combine_rewards(
         self,
-        local_rewards: np.ndarray,
-        node_revenues: np.ndarray,
         social_welfare: float,
         fairness_index: float,
         gini_coefficient: float,
+        deadline_violation_rate: float,
+        drop_rate: float,
+        load_imbalance: float,
+        completed_payments: np.ndarray,
+        completed_welfare: np.ndarray,
     ) -> np.ndarray:
-        """Собрать гибридное вознаграждение из RL и аукционного сигналов."""
-        integrated = self.integrate_vcg_payments(local_rewards, node_revenues)
+        """Собрать общий командный reward с аукционной компонентой."""
         global_reward = self.compute_global_reward(
             social_welfare=social_welfare,
+            deadline_violation_rate=deadline_violation_rate,
+            drop_rate=drop_rate,
+            load_imbalance=load_imbalance,
             fairness_index=fairness_index,
             gini_coefficient=gini_coefficient,
         )
-        global_signal = np.tanh(global_reward / (abs(social_welfare) + 1.0))
-        return integrated + self.global_weight * global_signal
+        auction_reward = self.compute_auction_reward(
+            completed_payments=completed_payments,
+            completed_welfare=completed_welfare,
+        )
+        lambda_vcg = float(np.clip(self.vcg_weight, 0.0, 1.0))
+        global_mix = float(np.clip(self.global_weight, 0.0, 1.0))
+        hybrid_reward = (1.0 - lambda_vcg) * global_reward + lambda_vcg * auction_reward
+        shared_reward = (1.0 - global_mix) * hybrid_reward + global_mix * global_reward
+        return np.full(self.num_agents, shared_reward, dtype=float)

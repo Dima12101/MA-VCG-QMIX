@@ -4,6 +4,9 @@
 
 import unittest
 import numpy as np
+from src.config import NodeConfig
+from src.environment.edge_node import EdgeNode
+from src.environment.task import Task
 from src.mechanisms.auction import VCGAuctioneer
 
 class TestVCGAuction(unittest.TestCase):
@@ -48,6 +51,43 @@ class TestVCGAuction(unittest.TestCase):
         # Платежи должны быть в разумном диапазоне
         self.assertTrue(np.all(result.payments >= 0))
         self.assertTrue(np.all(result.payments <= 10))
+
+    def test_exact_allocation_with_resource_constraints(self):
+        """Точный поиск должен находить глобально выгодное распределение."""
+        auctioneer = VCGAuctioneer(num_devices=2, num_nodes=2)
+        utilities = np.array([[10.0, 9.0], [9.0, 1.0]])
+        costs = np.zeros_like(utilities)
+        tasks = [
+            Task(id=0, device_id=0, cpu_required=5, memory_required=1, data_size=1),
+            Task(id=1, device_id=1, cpu_required=5, memory_required=1, data_size=1),
+        ]
+        nodes = [
+            EdgeNode(0, NodeConfig(cpu_capacity=5, memory_capacity=8)),
+            EdgeNode(1, NodeConfig(cpu_capacity=5, memory_capacity=8)),
+        ]
+
+        result = auctioneer.run_auction(utilities, costs, tasks=tasks, nodes=nodes)
+
+        expected_allocation = np.array([[0, 1], [1, 0]])
+        np.testing.assert_array_equal(result.allocation, expected_allocation)
+        self.assertAlmostEqual(result.social_welfare, 18.0)
+
+    def test_vcg_payment_uses_net_contribution(self):
+        """VCG-платёж должен учитывать внешний эффект по value minus cost."""
+        auctioneer = VCGAuctioneer(num_devices=2, num_nodes=1)
+        utilities = np.array([[10.0], [8.0]])
+        costs = np.array([[6.0], [1.0]])
+        tasks = [
+            Task(id=0, device_id=0, cpu_required=1, memory_required=1, data_size=1),
+            Task(id=1, device_id=1, cpu_required=1, memory_required=1, data_size=1),
+        ]
+        nodes = [EdgeNode(0, NodeConfig(cpu_capacity=1, memory_capacity=4))]
+
+        result = auctioneer.run_auction(utilities, costs, tasks=tasks, nodes=nodes)
+
+        np.testing.assert_array_equal(result.allocation, np.array([[0], [1]]))
+        self.assertAlmostEqual(result.payments[1], 4.0)
+        self.assertAlmostEqual(result.payments[0], 0.0)
 
 if __name__ == '__main__':
     unittest.main()
