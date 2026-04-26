@@ -13,7 +13,7 @@ def evaluate_utility(
     base = task.priority.value * (task.cpu_required + task.memory_required) * task.importance
 
     # Функция штрафа за задержку определяет, насколько эта польза уменьшается из-за задержки
-    estimated_time_ms = task.processing_time_ms(edge_node.cpu_capacity) + network_latency_ms
+    estimated_time_ms = task.processing_time_ms(edge_node.cpu_capacity) + network_latency_ms # TODO
     time_penalty = math.exp(
         -edge_node.delay_sensitivity * estimated_time_ms / max(task.deadline, 1.0)
     )
@@ -44,6 +44,9 @@ def evaluate_cost(
     )
 
     # Стоимость перегрузки позволяет учесть снижение производительности при высокой загрузке
-    overload_cost = computation_cost * (1 + edge_node.load ** 2)
+    overload_cost = (
+           ((edge_node.cpu_used + task.cpu_required) / edge_node.cpu_capacity) ** 2
+           + ((edge_node.memory_used + task.memory_required) / edge_node.memory_capacity) ** 2
+    )
 
     return computation_cost + communication_cost + overload_cost

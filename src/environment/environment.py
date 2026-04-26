@@ -70,7 +70,6 @@ class EdgeComputingSystem:
             self.node_config,
             cpu_capacity=random.randint(*self.node_config.cpu_capacity_range),
             memory_capacity=random.randint(*self.node_config.memory_capacity_range),
-            bandwidth=random.uniform(*self.node_config.bandwidth_range),
         )
     
     def _initialize_network(self):
@@ -242,7 +241,6 @@ class EdgeComputingSystem:
                     device_id=device_id,
                     cpu_required=random.randint(self.task_config.cpu['min'], self.task_config.cpu['max']),
                     memory_required=random.randint(self.task_config.memory['min'], self.task_config.memory['max']),
-                    bandwidth_required =random.randint(self.task_config.bandwidth['min'], self.task_config.bandwidth['max']),
                     data_size=random.randint(self.task_config.data_size['min'], self.task_config.data_size['max']),
                     deadline=random.randint(self.task_config.deadline['min'], self.task_config.deadline['max']),
                     arrival_time=self.current_time,

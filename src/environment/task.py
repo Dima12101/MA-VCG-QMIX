@@ -12,14 +12,16 @@ class Task:
     """Класс для представления задачи"""
     id: int                                         # ID задачи
     device_id: int                                  # Какое устройство выставило задачу
+    arrival_time: int = 0                           # Время прихода в систему
+
     cpu_required: int                               # Требуемые CPU ресурсы
     memory_required: int                            # Требуемая память (MB)
-    bandwidth_required: int                         # Требуемая пропускная способность (Mbps)
-    data_size: int                                  # Объем данных (MB)
+
+    data_size: int                                  # Объем передаваемых данных (MB)
     priority: TaskPriority = TaskPriority.MEDIUM    # Приоритет задачи (по умолчанию MEDIUM)
-    deadline: int = 5000                            # Дедлайн выполнения (мс)
+    deadline: int = 5000                            # Крайний срок выполнения (мс)
     importance: float = 1.0                         # Важность для устройства (0..1)
-    arrival_time: int = 0                           # Время прихода в систему
+
 
     def is_expired(self, current_time: int, step_duration_ms: int = 1) -> bool:
         """Истёк ли дедлайн?"""

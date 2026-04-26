@@ -6,27 +6,34 @@ class EdgeNode:
     """Класс для представления edge-узла"""
     
     def __init__(self, id: int, config: NodeConfig):
-        self.id = id                                                # ID узла
-        self.cpu_capacity = config.cpu_capacity                     # Доступные ресурсы CPU узла
-        self.memory_capacity = config.memory_capacity               # Доступные ресурсы MEM узла
-        self.bandwidth = config.bandwidth                           # Пропускная способность узла
+        self.id = id                                                        # ID узла
 
-        self.base_price = {
-            "CPU": config.cpu_unit_price,
-            "MEM": config.memory_unit_price,
-            "NET": config.network_unit_price,
-        }
-        self.delay_sensitivity = config.delay_sensitivity
-        self.transmission_energy_coeff = config.transmission_energy_coeff
-        self.indirect_link_penalty = config.indirect_link_penalty
-
+        # Resources
+        self.cpu_capacity = config.cpu_capacity                             # Доступные ресурсы CPU узла
+        self.memory_capacity = config.memory_capacity                       # Доступные ресурсы MEM узла
         self.cpu_used = 0
         self.memory_used = 0
+
+        # Cost coefficients
+        self.base_price = {
+            "CPU": config.cpu_unit_price,                                   # Цена за использование CPU
+            "MEM": config.memory_unit_price,                                # Цена за использование MEM
+            "NET": config.network_unit_price,                               # Цена передачи данных к узлу
+        }
+        self.transmission_energy_coeff = config.transmission_energy_coeff   # Затраты энергии на передачу данных
+        self.indirect_link_penalty = config.indirect_link_penalty           # Штраф за не прямое соединение
+
+        # Utilities coefficients
+        self.delay_sensitivity = config.delay_sensitivity                   # Чувствительность к задержке        
+
+        # Tasks
         self.task_queue: Dict[int, Task] = {}
         self.task_executed: Dict[int, Task] = {}
         self.task_executed_time: Dict[int, int] = {}
+
+        # Failure
         self.is_failed = False
-        self.failed_until_step: Optional[int] = None
+        self.failed_until_step: Optional[int] = None                        # Продолжительность отказа узла
     
     def reset(self):
         self.cpu_used = 0 

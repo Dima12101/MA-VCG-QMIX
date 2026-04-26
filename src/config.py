@@ -38,7 +38,6 @@ class TaskConfig:
 
     cpu: Dict[str, int] = field(default_factory=lambda: {"min": 1, "max": 8})
     memory: Dict[str, int] = field(default_factory=lambda: {"min": 1, "max": 16})
-    bandwidth: Dict[str, int] = field(default_factory=lambda: {"min": 10, "max": 100})
     data_size: Dict[str, int] = field(default_factory=lambda: {"min": 1, "max": 30})
     deadline: Dict[str, int] = field(default_factory=lambda: {"min": 500, "max": 10000})
 
@@ -49,11 +48,9 @@ class NodeConfig:
 
     cpu_capacity: int = 32
     memory_capacity: int = 64
-    bandwidth: float = 1000.0
     heterogeneous_resources: bool = False
     cpu_capacity_range: Tuple[int, int] = (20, 40)
     memory_capacity_range: Tuple[int, int] = (32, 64)
-    bandwidth_range: Tuple[float, float] = (200.0, 1000.0)
     cpu_unit_price: float = 0.2
     memory_unit_price: float = 0.05
     network_unit_price: float = 0.01
