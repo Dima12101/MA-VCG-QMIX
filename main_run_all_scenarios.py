@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--results-dir",
-        default="experiments/results/validation",
+        default="experiments/results/chapter6",
         help="Directory for raw benchmark outputs and aggregated artifacts.",
     )
     parser.add_argument(

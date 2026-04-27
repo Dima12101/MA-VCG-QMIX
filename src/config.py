@@ -97,8 +97,8 @@ class NetworkConfig:
 class AuctionConfig:
     """Параметры интеграции аукциона и QMIX."""
 
-    vcg_weight: float = 0.5
-    global_reward_weight: float = 0.1
+    vcg_weight: float = 0.65
+    global_reward_weight: float = 0.15
     payment_scaling: float = 1.0
     gini_target: float = 0.3
     fairness_target: float = 0.85

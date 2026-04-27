@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+import pandas as pd
 
 from src.config import (
     AUCTION_CONFIG,
@@ -13,6 +14,7 @@ from src.config import (
     TRAINING_CONFIG,
 )
 from src.learning.benchmark import BenchmarkRunner, MethodSpec, ScenarioSpec
+from visualization.plot_results import ResultsVisualizer
 
 
 class TestBenchmarkRunner(unittest.TestCase):
@@ -66,6 +68,85 @@ class TestBenchmarkRunner(unittest.TestCase):
             self.assertIn("mean_social_welfare_ci95", summary.columns)
             self.assertTrue((Path(tmp_dir) / "summary.csv").exists())
             self.assertTrue((Path(tmp_dir) / "summary_by_seed.csv").exists())
+
+            summary_by_seed = pd.read_csv(Path(tmp_dir) / "summary_by_seed.csv")
+            seeds_by_method = summary_by_seed.groupby("method")["seed"].unique().to_dict()
+            self.assertEqual(
+                {tuple(seeds) for seeds in seeds_by_method.values()},
+                {(7,)},
+            )
+
+    def test_visualizer_exports_all_tied_winners(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            results_dir = Path(tmp_dir)
+            summary = pd.DataFrame(
+                [
+                    {
+                        "scenario": "baseline",
+                        "scenario_label": "Сценарий 1",
+                        "method": "vcg",
+                        "method_label": "MA-VCG",
+                        "mean_social_welfare": 3.5,
+                        "mean_social_welfare_std": 0.2,
+                        "mean_acceptance_rate": 60.0,
+                        "mean_acceptance_rate_std": 1.0,
+                        "mean_deadline_success_rate": 0.8,
+                        "mean_deadline_success_rate_std": 0.01,
+                        "mean_avg_latency": 150.0,
+                        "mean_avg_latency_std": 5.0,
+                        "mean_gini_payment": 0.0,
+                        "mean_gini_payment_std": 0.0,
+                        "mean_fairness_index": 0.25,
+                        "mean_fairness_index_std": 0.01,
+                    },
+                    {
+                        "scenario": "baseline",
+                        "scenario_label": "Сценарий 1",
+                        "method": "heuristic",
+                        "method_label": "Heuristic-LoadAware",
+                        "mean_social_welfare": 3.5,
+                        "mean_social_welfare_std": 0.2,
+                        "mean_acceptance_rate": 60.0,
+                        "mean_acceptance_rate_std": 1.0,
+                        "mean_deadline_success_rate": 0.8,
+                        "mean_deadline_success_rate_std": 0.01,
+                        "mean_avg_latency": 150.0,
+                        "mean_avg_latency_std": 5.0,
+                        "mean_gini_payment": 0.0,
+                        "mean_gini_payment_std": 0.0,
+                        "mean_fairness_index": 0.25,
+                        "mean_fairness_index_std": 0.01,
+                    },
+                    {
+                        "scenario": "baseline",
+                        "scenario_label": "Сценарий 1",
+                        "method": "qmix",
+                        "method_label": "QMIX",
+                        "mean_social_welfare": 3.1,
+                        "mean_social_welfare_std": 0.4,
+                        "mean_acceptance_rate": 58.0,
+                        "mean_acceptance_rate_std": 2.0,
+                        "mean_deadline_success_rate": 0.76,
+                        "mean_deadline_success_rate_std": 0.03,
+                        "mean_avg_latency": 148.0,
+                        "mean_avg_latency_std": 7.0,
+                        "mean_gini_payment": 0.0,
+                        "mean_gini_payment_std": 0.0,
+                        "mean_fairness_index": 0.28,
+                        "mean_fairness_index_std": 0.02,
+                    },
+                ]
+            )
+            summary.to_csv(results_dir / "summary.csv", index=False)
+
+            visualizer = ResultsVisualizer(results_dir=results_dir)
+            visualizer.export_tables()
+
+            winners = pd.read_csv(results_dir / "tables" / "scenario_winners.csv")
+            self.assertEqual(
+                winners.loc[0, "Лидирующий метод(ы) по SW"],
+                "Heuristic-LoadAware / MA-VCG",
+            )
 
 
 if __name__ == "__main__":

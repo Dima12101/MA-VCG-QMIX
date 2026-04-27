@@ -258,12 +258,12 @@ class BenchmarkRunner:
             MethodSpec(
                 name="hybrid",
                 label="MA-VCG-QMIX",
-                auction_config=replace(AUCTION_CONFIG, vcg_weight=0.5, global_reward_weight=0.2),
+                auction_config=replace(AUCTION_CONFIG, vcg_weight=0.65, global_reward_weight=0.15),
                 learning_enabled=True,
                 color="#059669",
                 description=(
-                    "Гибридный метод: командное reward сочетает RL-сигнал и "
-                    "аукционную компоненту."
+                    "Гибридный метод: аукционная reward-компонента включается "
+                    "только в стрессовых режимах среды."
                 ),
             ),
         ]
@@ -365,9 +365,11 @@ class BenchmarkRunner:
                 "fairness_index": metrics["fairness_index"],
                 "social_welfare": metrics["social_welfare"],
                 "load_imbalance": metrics["load_imbalance"],
+                "backlog_pressure": metrics["backlog_pressure"],
                 "arrival_rate": metrics["arrival_rate"],
                 "load_spike_active": metrics["load_spike_active"],
                 "failed_nodes": metrics["failed_nodes"],
+                "stress_context": metrics["stress_context"],
                 "reward_mean": float(np.mean(rewards)),
                 "reward_std": float(np.std(rewards)),
                 "td_error": np.nan if td_error is None else float(td_error),
@@ -397,6 +399,7 @@ class BenchmarkRunner:
             "mean_gini_payment": step_df["gini_payment"].mean(),
             "mean_fairness_index": step_df["fairness_index"].mean(),
             "mean_load_imbalance": step_df["load_imbalance"].mean(),
+            "mean_backlog_pressure": step_df["backlog_pressure"].mean(),
             "mean_completed_tasks": step_df["completed_tasks"].mean(),
             "mean_completed_before_deadline": step_df["completed_before_deadline"].mean(),
             "mean_reward": step_df["reward_mean"].mean(),
@@ -472,8 +475,8 @@ class BenchmarkRunner:
         for seed_idx in range(num_seeds):
             run_seed_base = seed + seed_idx * 1000
             for scenario_idx, scenario in enumerate(scenarios):
-                for method_idx, method in enumerate(methods):
-                    run_seed = run_seed_base + scenario_idx * 100 + method_idx * 7
+                for method in methods:
+                    run_seed = run_seed_base + scenario_idx * 100
                     run_index += 1
                     print(
                         f"[{run_index:03d}/{total_runs:03d}] "

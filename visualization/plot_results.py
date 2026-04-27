@@ -58,6 +58,8 @@ class ResultsVisualizer:
             "MA-VCG-QMIX": "#059669",
         }
         self.scenario_specs = {spec.name: spec for spec in BenchmarkRunner.default_scenarios()}
+        self.scenario_order = [spec.name for spec in BenchmarkRunner.default_scenarios()]
+        self.method_order = [spec.name for spec in BenchmarkRunner.default_methods()]
 
     def _save_figure(self, stem: str):
         saved_paths = []
@@ -100,6 +102,10 @@ class ResultsVisualizer:
             raise FileNotFoundError(f"Файлы {phase}/episode_summary.csv не найдены.")
         return pd.concat([pd.read_csv(path) for path in files], ignore_index=True)
 
+    def _episode_summary_exists(self, phase: str = "train") -> bool:
+        """Check whether episode-level artifacts exist for the selected phase."""
+        return any(self.results_dir.glob(f"*/*/seed_*/{phase}/episode_summary.csv"))
+
     def load_step_records(
         self,
         scenario: str | None = None,
@@ -124,9 +130,52 @@ class ResultsVisualizer:
     def _format_mean_pm_std(mean_value: float, std_value: float, precision: int = 3) -> str:
         return f"{mean_value:.{precision}f} $\\pm$ {std_value:.{precision}f}"
 
+    @staticmethod
+    def _build_winners_table(
+        summary: pd.DataFrame,
+        tolerance: float = 1e-9,
+    ) -> pd.DataFrame:
+        """Build a scenario-level winner table with explicit tie handling."""
+        rows = []
+        for scenario_label, scenario_df in summary.groupby("scenario_label", sort=False):
+            best_sw = float(scenario_df["mean_social_welfare"].max())
+            winners_df = scenario_df[
+                (scenario_df["mean_social_welfare"] - best_sw).abs() <= tolerance
+            ].sort_values("method_label")
+            lead_row = winners_df.iloc[0]
+            rows.append(
+                {
+                    "Сценарий": scenario_label,
+                    "Лидирующий метод(ы) по SW": " / ".join(winners_df["method_label"]),
+                    "SW": ResultsVisualizer._format_mean_pm_std(
+                        float(lead_row["mean_social_welfare"]),
+                        float(lead_row["mean_social_welfare_std"]),
+                    ),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def _ordered_summary(self, summary: pd.DataFrame) -> pd.DataFrame:
+        """Return summary rows in the canonical chapter order."""
+        order_lookup = {
+            "scenario_order": {name: index for index, name in enumerate(self.scenario_order)},
+            "method_order": {name: index for index, name in enumerate(self.method_order)},
+        }
+        ordered = summary.copy()
+        ordered["_scenario_order"] = ordered["scenario"].map(
+            lambda value: order_lookup["scenario_order"].get(value, len(self.scenario_order))
+        )
+        ordered["_method_order"] = ordered["method"].map(
+            lambda value: order_lookup["method_order"].get(value, len(self.method_order))
+        )
+        ordered = ordered.sort_values(
+            ["_scenario_order", "_method_order", "scenario_label", "method_label"]
+        )
+        return ordered.drop(columns=["_scenario_order", "_method_order"])
+
     def export_tables(self):
         """Export summary tables in CSV and LaTeX formats."""
-        summary = self.load_summary().sort_values(["scenario", "method"])
+        summary = self._ordered_summary(self.load_summary())
 
         chapter_table = pd.DataFrame(
             {
@@ -179,25 +228,7 @@ class ResultsVisualizer:
         chapter_table.to_csv(self.tables_dir / "summary_table.csv", index=False)
         self._write_latex_table(chapter_table, "summary_table.tex")
 
-        winners = (
-            summary.sort_values("mean_social_welfare", ascending=False)
-            .groupby("scenario_label", as_index=False)
-            .first()[["scenario_label", "method_label", "mean_social_welfare", "mean_social_welfare_std"]]
-        )
-        winners = winners.rename(
-            columns={
-                "scenario_label": "Сценарий",
-                "method_label": "Лучший метод по SW",
-            }
-        )
-        winners["SW"] = [
-            self._format_mean_pm_std(mean_value, std_value)
-            for mean_value, std_value in zip(
-                winners["mean_social_welfare"],
-                winners["mean_social_welfare_std"],
-            )
-        ]
-        winners = winners[["Сценарий", "Лучший метод по SW", "SW"]]
+        winners = self._build_winners_table(summary)
         winners.to_csv(self.tables_dir / "scenario_winners.csv", index=False)
         self._write_latex_table(winners, "scenario_winners.tex")
 
@@ -206,9 +237,13 @@ class ResultsVisualizer:
             scenario_table.to_csv(self.tables_dir / f"{scenario_name}_table.csv", index=False)
             self._write_latex_table(scenario_table, f"{scenario_name}_table.tex")
 
-        load_spikes = self._build_load_spike_window_table()
-        load_spikes.to_csv(self.tables_dir / "load_spikes_windows.csv", index=False)
-        self._write_latex_table(load_spikes, "load_spikes_windows.tex")
+        try:
+            load_spikes = self._build_load_spike_window_table()
+        except FileNotFoundError:
+            load_spikes = None
+        if load_spikes is not None:
+            load_spikes.to_csv(self.tables_dir / "load_spikes_windows.csv", index=False)
+            self._write_latex_table(load_spikes, "load_spikes_windows.tex")
 
     def _annotate_event_windows(self, axes, scenario_name: str):
         scenario = self.scenario_specs[scenario_name]
@@ -297,7 +332,7 @@ class ResultsVisualizer:
             ("mean_reward", "Среднее вознаграждение"),
             ("mean_td_error", "TD-ошибка"),
         ]
-        fig, axes = plt.subplots(2, 2, figsize=(20, 13))
+        fig, axes = plt.subplots(2, 2, figsize=(20, 15))
         axes = axes.flatten()
         for ax, (metric, title) in zip(axes, metrics):
             sns.lineplot(
@@ -318,7 +353,7 @@ class ResultsVisualizer:
             if ax.legend_:
                 ax.legend_.remove()
         fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False)
-        fig.suptitle("Кривые обучения QMIX и MA-VCG-QMIX", y=1.02)
+        # fig.suptitle("Кривые обучения QMIX и MA-VCG-QMIX", y=1.02)
         plt.tight_layout()
         self._save_figure("learning_curves")
         plt.close()
@@ -450,7 +485,8 @@ class ResultsVisualizer:
         self.export_tables()
         self.plot_method_overview()
         self.plot_social_welfare_boxplot()
-        self.plot_learning_curves()
+        if self._episode_summary_exists(phase="train"):
+            self.plot_learning_curves()
         self.plot_step_dynamics()
         self.plot_load_heatmaps()
         self.plot_fairness_welfare_scatter()

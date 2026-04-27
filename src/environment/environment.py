@@ -232,7 +232,9 @@ class EdgeComputingSystem:
             if latency <= task.deadline
         )
         load_imbalance = float(np.std([node.load for node in self.nodes]))
+        backlog_pressure = self._mean_backlog_pressure()
         failed_nodes = int(sum(node.is_failed for node in self.nodes))
+        stress_context = float(self.last_load_spike_active)
         
         # Определение метрик
         metrics = {
@@ -242,6 +244,7 @@ class EdgeComputingSystem:
             'drop_rate': info['rejected'] / max(len(self.tasks), 1),
             'resource_utilization': [node.load for node in self.nodes],
             'load_imbalance': load_imbalance,
+            'backlog_pressure': backlog_pressure,
             'deadline_success_rate': (
                 completed_before_deadline / max(len(completed_tasks), 1)
                 if completed_tasks
@@ -261,6 +264,7 @@ class EdgeComputingSystem:
             'arrival_rate': self.last_arrival_rate,
             'load_spike_active': float(self.last_load_spike_active),
             'failed_nodes': failed_nodes,
+            'stress_context': stress_context,
         }
         self._pending_round = None
 
@@ -391,6 +395,65 @@ class EdgeComputingSystem:
             return float("inf")
         return task.processing_time_ms(self.nodes[node_id].cpu_capacity) + latency
 
+    def _node_processing_backlog_ms(self, node_id: int) -> float:
+        """Оценить накопленный backlog на узле по текущим очередям и выполнению."""
+        node = self.nodes[node_id]
+        if node.is_failed:
+            return float("inf")
+
+        running_ms = sum(
+            max(0, remaining_steps) * max(self.env_config.step_duration_ms, 1)
+            for remaining_steps in node.task_executed_time.values()
+        )
+        queued_ms = sum(
+            task.processing_time_ms(node.cpu_capacity)
+            for task in node.task_queue.values()
+        )
+        return float(running_ms + queued_ms)
+
+    def _projected_completion_ms(
+        self,
+        task: Task,
+        node_id: int,
+        backlog_ms: float,
+    ) -> float:
+        """Оценить полное время завершения новой задачи с учетом накопленного backlog."""
+        service_time_ms = self._estimated_service_time_ms(task, node_id)
+        if not np.isfinite(service_time_ms) or not np.isfinite(backlog_ms):
+            return float("inf")
+        return float(backlog_ms + service_time_ms)
+
+    def _mean_backlog_pressure(self) -> float:
+        """Усредненная backlog-нагрузка через projected completion ratio."""
+        per_node_pressure = []
+        for node in self.nodes:
+            if node.is_failed:
+                per_node_pressure.append(1.0)
+                continue
+
+            backlog_ms = sum(
+                max(0, remaining_steps) * max(self.env_config.step_duration_ms, 1)
+                for remaining_steps in node.task_executed_time.values()
+            )
+            queued_tasks = sorted(
+                node.task_queue.values(),
+                key=lambda task: (-task.priority.value, task.deadline, task.id),
+            )
+            if not queued_tasks:
+                per_node_pressure.append(min(node.load, 1.0))
+                continue
+
+            projected_ratios = []
+            for task in queued_tasks:
+                projected_completion_ms = backlog_ms + task.processing_time_ms(node.cpu_capacity)
+                projected_ratios.append(
+                    projected_completion_ms / max(task.deadline, 1.0)
+                )
+                backlog_ms = projected_completion_ms
+            per_node_pressure.append(float(min(np.mean(projected_ratios), 2.0)))
+
+        return float(np.mean(per_node_pressure)) if per_node_pressure else 0.0
+
     def _build_auction_features(
         self,
         allocation: np.ndarray,
@@ -407,11 +470,21 @@ class EdgeComputingSystem:
                 continue
 
             assigned_tasks = [self.tasks[int(device_id)] for device_id in assigned_device_ids]
+            assigned_tasks.sort(key=lambda task: (task.deadline, task.id))
             total_cpu = sum(task.cpu_required for task in assigned_tasks)
-            total_service_ratio = np.mean([
-                min(2.0, self._estimated_service_time_ms(task, node.id) / max(task.deadline, 1.0))
-                for task in assigned_tasks
-            ])
+            backlog_ms = self._node_processing_backlog_ms(node.id)
+            projected_ratios = []
+            for task in assigned_tasks:
+                projected_completion_ms = self._projected_completion_ms(
+                    task,
+                    node.id,
+                    backlog_ms,
+                )
+                projected_ratios.append(
+                    min(2.5, projected_completion_ms / max(task.deadline, 1.0))
+                )
+                backlog_ms += task.processing_time_ms(node.cpu_capacity)
+            total_service_ratio = float(np.mean(projected_ratios)) if projected_ratios else 0.0
 
             features[node.id] = np.array(
                 [
@@ -445,7 +518,7 @@ class EdgeComputingSystem:
             base_obs = [
                 node.cpu_available / max(node.cpu_capacity, 1),
                 node.memory_available / max(node.memory_capacity, 1),
-                min(len(node.task_queue) / 10.0, 1.0),
+                min((len(node.task_queue) + len(node.task_executed)) / 10.0, 1.0),
                 neighbor_load,
                 1.0 if node.is_failed else 0.0,
             ]
@@ -475,6 +548,7 @@ class EdgeComputingSystem:
         realized_allocation = np.zeros_like(allocation)
         realized_payments = np.zeros_like(payments)
 
+        device_ids_by_node = {node.id: [] for node in self.nodes}
         for device_id, device_allocation in enumerate(allocation):
             if device_id not in self.tasks:
                 continue
@@ -487,30 +561,71 @@ class EdgeComputingSystem:
                 continue
 
             node_id = int(chosen_nodes[0])
-            action = int(actions[node_id])
-            if action == self.ACTION_REJECT or self.nodes[node_id].is_failed:
-                self.devices[device_id].task_rejected(task)
-                rejected_tasks.append(task)
+            device_ids_by_node[node_id].append(device_id)
+
+        node_backlog_ms = {
+            node.id: self._node_processing_backlog_ms(node.id)
+            for node in self.nodes
+        }
+        for node in self.nodes:
+            action = int(actions[node.id])
+            device_ids = sorted(
+                device_ids_by_node[node.id],
+                key=lambda device_id: (
+                    self.tasks[device_id].deadline,
+                    self.tasks[device_id].id,
+                ),
+            )
+            if not device_ids:
                 continue
 
-            if action == self.ACTION_PRIORITY_HIGH:
-                task.priority = TaskPriority.HIGH
-            elif action == self.ACTION_PRIORITY_LOW:
-                task.priority = TaskPriority.LOW
+            if action == self.ACTION_REJECT or node.is_failed:
+                for device_id in device_ids:
+                    task = self.tasks[device_id]
+                    self.devices[device_id].task_rejected(task)
+                    rejected_tasks.append(task)
+                continue
 
-            latency, _ = self._device_node_latency(device_id, node_id)
-            task.assigned_node_id = node_id
-            task.allocated_payment = float(payments[device_id])
-            task.welfare_contribution = float(
-                utility_matrix[device_id, node_id] - cost_matrix[device_id, node_id]
-            )
-            task.allocation_latency_ms = 0.0 if not np.isfinite(latency) else float(latency)
-            self.nodes[node_id].accept_task(task)
-            self.devices[device_id].record_payment(payments[device_id])
-            accepted_tasks.append(task)
-            assignments[node_id].append(task)
-            realized_allocation[device_id, node_id] = 1
-            realized_payments[device_id] = payments[device_id]
+            for device_id in device_ids:
+                task = self.tasks[device_id]
+                projected_completion_ms = self._projected_completion_ms(
+                    task,
+                    node.id,
+                    node_backlog_ms[node.id],
+                )
+                projected_service_ratio = projected_completion_ms / max(task.deadline, 1.0)
+
+                # LOW-priority mode becomes a selective safety valve: accept only
+                # the tasks that still look feasible under the current backlog.
+                if (
+                    action == self.ACTION_PRIORITY_LOW
+                    and projected_service_ratio > 1.20
+                ):
+                    self.devices[device_id].task_rejected(task)
+                    rejected_tasks.append(task)
+                    continue
+
+                if action == self.ACTION_PRIORITY_HIGH:
+                    task.priority = TaskPriority.HIGH
+                elif action == self.ACTION_PRIORITY_LOW:
+                    task.priority = TaskPriority.LOW
+
+                latency, _ = self._device_node_latency(device_id, node.id)
+                task.assigned_node_id = node.id
+                task.allocated_payment = float(payments[device_id])
+                task.welfare_contribution = float(
+                    utility_matrix[device_id, node.id] - cost_matrix[device_id, node.id]
+                )
+                task.allocation_latency_ms = 0.0 if not np.isfinite(latency) else float(latency)
+                task.projected_completion_ms = projected_completion_ms
+                task.projected_service_ratio = float(projected_service_ratio)
+                self.nodes[node.id].accept_task(task)
+                self.devices[device_id].record_payment(payments[device_id])
+                accepted_tasks.append(task)
+                assignments[node.id].append(task)
+                realized_allocation[device_id, node.id] = 1
+                realized_payments[device_id] = payments[device_id]
+                node_backlog_ms[node.id] += task.processing_time_ms(node.cpu_capacity)
 
         return accepted_tasks, rejected_tasks, assignments, realized_allocation, realized_payments
 
@@ -546,20 +661,17 @@ class EdgeComputingSystem:
         )
         fairness_index = self.auctioneer.compute_fairness_index(realized_allocation)
         gini_coefficient = self.auctioneer.compute_gini_coefficient(realized_payments)
-        deadline_violations = 0
-        for task in accepted_tasks:
-            if task.assigned_node_id is None:
-                continue
-            node = self.nodes[task.assigned_node_id]
-            estimated_service_time = (
-                task.processing_time_ms(node.cpu_capacity) + task.allocation_latency_ms
-            )
-            if estimated_service_time > task.deadline:
-                deadline_violations += 1
+        deadline_violations = sum(
+            1
+            for task in accepted_tasks
+            if task.projected_service_ratio > 1.0
+        )
 
         drop_rate = len(rejected_tasks) / max(len(self.tasks), 1)
         violation_rate = deadline_violations / max(len(accepted_tasks), 1) if accepted_tasks else 0.0
         load_imbalance = float(np.std([node.load for node in self.nodes]))
+        backlog_pressure = self._mean_backlog_pressure()
+        stress_context = float(self.last_load_spike_active)
         completed_payments = np.array(
             [task.allocated_payment for task in completed_tasks],
             dtype=float,
@@ -577,6 +689,8 @@ class EdgeComputingSystem:
             load_imbalance=load_imbalance,
             completed_payments=completed_payments,
             completed_welfare=completed_welfare,
+            backlog_pressure=backlog_pressure,
+            stress_context=stress_context,
         )
     
     def get_observations(self) -> np.ndarray:

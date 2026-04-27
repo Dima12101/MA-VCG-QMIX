@@ -30,6 +30,8 @@ class Task:
     allocated_payment: float = 0.0                  # VCG-платеж за задачу
     welfare_contribution: float = 0.0               # Вклад в social welfare
     allocation_latency_ms: float = 0.0              # Задержка на выбранном маршруте
+    projected_completion_ms: float = 0.0            # Прогноз полного завершения с учетом backlog
+    projected_service_ratio: float = 0.0            # projected_completion_ms / deadline
 
 
     def is_expired(self, current_time: int, step_duration_ms: int = 1) -> bool:
